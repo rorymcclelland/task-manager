@@ -5,13 +5,15 @@
 // request is visible here.
 //
 // API (all JSON):
-//   GET   /api/tasks?view=open|closed      list tasks
+//   GET   /api/tasks?view=open|closed      list tasks (open ones include `priority`)
+//   GET   /api/matrix                      open tasks grouped by Eisenhower quadrant
 //   POST  /api/capture      {text}         quick-add from one typed line
 //   POST  /api/tasks        {title, notes?, source?, url?, externalId?}
 //   PATCH /api/tasks/:id    {title?, notes?, source?, url?, ...}
 //   POST  /api/tasks/:id/complete
 //   POST  /api/tasks/:id/drop
 //   POST  /api/tasks/:id/reopen
+//   POST  /api/tasks/:id/place          {quadrant}  do|schedule|delegate|eliminate|untriaged
 //   POST  /api/tasks/:id/merge          {intoId}   fold this task into another
 //   POST  /api/tasks/:id/not-duplicate  {otherId}
 //   GET   /api/duplicates
@@ -72,14 +74,19 @@ async function handleApi(service: TaskService, request: IncomingMessage, respons
     return sendJson(response, 201, await service.create(parsed));
   }
 
+  if (resource === 'matrix' && method === 'GET') return sendJson(response, 200, await service.matrix());
+
   if (resource === 'duplicates' && method === 'GET') {
     const pairs = await service.duplicates();
     return sendJson(response, 200, pairs.map((p) => ({ a: p.a, b: p.b, score: p.score })));
   }
 
   if (resource === 'tasks' && id && !action) {
-    if (method === 'GET') return sendJson(response, 200, await service.get(id));
-    if (method === 'PATCH') return sendJson(response, 200, await service.update(id, await readJson(request)));
+    if (method === 'GET') return sendJson(response, 200, await service.getPrioritised(id));
+    if (method === 'PATCH') {
+      await service.update(id, await readJson(request));
+      return sendJson(response, 200, await service.getPrioritised(id));
+    }
   }
 
   if (resource === 'tasks' && id && action && method === 'POST') {
@@ -90,6 +97,10 @@ async function handleApi(service: TaskService, request: IncomingMessage, respons
         return sendJson(response, 200, await service.drop(id));
       case 'reopen':
         return sendJson(response, 200, await service.reopen(id));
+      case 'place': {
+        const { quadrant } = await readJson(request);
+        return sendJson(response, 200, await service.place(id, quadrant));
+      }
       case 'merge': {
         const { intoId } = await readJson(request);
         return sendJson(response, 200, await service.merge(id, String(intoId)));

@@ -40,7 +40,9 @@ export interface Task {
 
   // Eisenhower inputs. `null` means "not decided yet" — deliberately different
   // from `false`, so the app can tell an untriaged task from one you've judged
-  // to be unimportant. Phase 2 builds the matrix on these.
+  // to be unimportant. src/priority.ts turns these (plus the due date) into
+  // a place on the Eisenhower matrix. `urgent` is what you said; a near due
+  // date can make a task urgent regardless (see priority.ts).
   important: boolean | null;
   urgent: boolean | null;
 

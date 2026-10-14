@@ -7,6 +7,17 @@
 import { randomUUID } from 'node:crypto';
 import { findDuplicatePairs, type DuplicatePair } from './duplicates.ts';
 import { isDateString, isSource, type Source, type SourceRef, type Task } from './model.ts';
+import {
+  buildMatrix,
+  DEFAULT_SETTINGS,
+  localDateString,
+  prioritise,
+  QUADRANT_FLAGS,
+  type Matrix,
+  type Placement,
+  type PrioritisedTask,
+  type PrioritySettings,
+} from './priority.ts';
 import type { TaskStore } from './store/task-store.ts';
 
 /** Thrown for bad input; the HTTP layer turns it into a 400 response. */
@@ -20,6 +31,8 @@ export interface NewTask {
   source?: Source;
   externalId?: string | null;
   url?: string | null;
+  /** Optionally place it on the matrix straight away (capture's !1–!4). */
+  placement?: Placement;
 }
 
 /** The fields you can edit directly. Status changes have their own methods. */
@@ -37,19 +50,35 @@ export interface TaskChanges {
 export class TaskService {
   private readonly store: TaskStore;
   private readonly now: () => Date;
+  readonly settings: PrioritySettings;
 
   /** `now` is swappable so tests can control time. */
-  constructor(store: TaskStore, now: () => Date = () => new Date()) {
+  constructor(store: TaskStore, now: () => Date = () => new Date(), settings: PrioritySettings = DEFAULT_SETTINGS) {
     this.store = store;
     this.now = now;
+    this.settings = settings;
+  }
+
+  /** Today's date as YYYY-MM-DD, on this computer's clock. */
+  today(): string {
+    return localDateString(this.now());
   }
 
   // ---- Reading ----------------------------------------------------------
 
-  /** Open tasks, newest first. (1.1: everything in one list.) */
-  async listOpen(): Promise<Task[]> {
+  /** Open tasks, newest first, each with its current priority. (1.1: everything
+   *  in one list.) */
+  async listOpen(): Promise<PrioritisedTask[]> {
+    const today = this.today();
     const tasks = (await this.store.all()).filter((t) => t.status === 'open');
-    return tasks.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return tasks
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((t) => ({ ...t, priority: prioritise(t, today, this.settings) }));
+  }
+
+  /** Open tasks grouped into Eisenhower quadrants. (2.1, 2.2, 2.5) */
+  async matrix(): Promise<Matrix> {
+    return buildMatrix(await this.store.all(), this.today(), this.settings);
   }
 
   /** Done, dropped and merged tasks, most recently closed first. */
@@ -82,8 +111,7 @@ export class TaskService {
       notes: typeof input.notes === 'string' ? input.notes.trim() : '',
       origin: { source, externalId: input.externalId ?? null, url: cleanUrl(input.url) },
       alsoIn: [],
-      important: null,
-      urgent: null,
+      ...flagsFor(input.placement ?? 'untriaged'),
       dueDate: null,
       scheduledDate: null,
       status: 'open',
@@ -118,6 +146,29 @@ export class TaskService {
     updated.updatedAt = this.now().toISOString();
     await this.store.save(updated);
     return updated;
+  }
+
+  // ---- Prioritising (2.3) --------------------------------------------------
+
+  /**
+   * Move a task to a quadrant (or back to "not placed yet") by setting its
+   * important/urgent answers in one go.
+   *
+   * The due-date rule still applies afterwards: put a task that's due tomorrow
+   * into "Schedule" and it will still show in "Do now". The answer you gave is
+   * saved, so it takes effect once the due date moves or is cleared. The
+   * returned priority lets the UI explain when that happens.
+   */
+  async place(id: string, placement: unknown): Promise<PrioritisedTask> {
+    if (!isPlacement(placement)) throw new ValidationError(`Unknown quadrant: ${String(placement)}`);
+    const task = await this.update(id, flagsFor(placement));
+    return { ...task, priority: prioritise(task, this.today(), this.settings) };
+  }
+
+  /** The same as `get`, with the task's current priority attached. */
+  async getPrioritised(id: string): Promise<PrioritisedTask> {
+    const task = await this.get(id);
+    return { ...task, priority: prioritise(task, this.today(), this.settings) };
   }
 
   // ---- Closing and reopening (1.4) ----------------------------------------
@@ -210,6 +261,15 @@ export class TaskService {
 }
 
 // ---- Small helpers -----------------------------------------------------------
+
+function isPlacement(value: unknown): value is Placement {
+  return typeof value === 'string' && Object.hasOwn(QUADRANT_FLAGS, value);
+}
+
+function flagsFor(placement: Placement): { important: boolean | null; urgent: boolean | null } {
+  if (!isPlacement(placement)) throw new ValidationError(`Unknown quadrant: ${String(placement)}`);
+  return { ...QUADRANT_FLAGS[placement] };
+}
 
 function requireTitle(value: unknown): string {
   const title = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';

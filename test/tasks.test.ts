@@ -115,3 +115,65 @@ test('a task cannot be merged into itself or into a closed task', async () => {
   await assert.rejects(service.merge(a.id, a.id), ValidationError);
   await assert.rejects(service.merge(a.id, b.id), ValidationError);
 });
+
+// ---- Phase 2 -----------------------------------------------------------------
+
+test('2.1 — new tasks start untriaged', async () => {
+  const service = await freshService();
+  await service.create({ title: 'Undecided' });
+  const [task] = await service.listOpen();
+  assert.equal(task.priority.placement, 'untriaged');
+});
+
+test('2.3 — placing a task sets both answers in one step', async () => {
+  const service = await freshService();
+  const task = await service.create({ title: 'Quarterly plan' });
+  const placed = await service.place(task.id, 'schedule');
+  assert.equal(placed.important, true);
+  assert.equal(placed.urgent, false);
+  assert.equal(placed.priority.placement, 'schedule');
+
+  const back = await service.place(task.id, 'untriaged');
+  assert.equal(back.important, null);
+  assert.equal(back.urgent, null);
+});
+
+test('2.3 — an unknown quadrant is refused', async () => {
+  const service = await freshService();
+  const task = await service.create({ title: 'x' });
+  await assert.rejects(service.place(task.id, 'someday'), ValidationError);
+  await assert.rejects(service.place(task.id, 'toString'), ValidationError);
+});
+
+test('2.4 — a task due soon stays in "Do now" even when placed in "Schedule"', async () => {
+  const service = await freshService(); // clock: 14 Oct 2026
+  const task = await service.create({ title: 'File expenses' });
+  await service.update(task.id, { dueDate: '2026-10-15' });
+  const placed = await service.place(task.id, 'schedule');
+  assert.equal(placed.urgent, false, 'your answer is saved…');
+  assert.equal(placed.priority.placement, 'do', '…but the due date still wins');
+  assert.equal(placed.priority.urgencyReason, 'due-soon');
+});
+
+test('capture can place a task straight away', async () => {
+  const service = await freshService();
+  const task = await service.create({ title: 'Pay VAT', placement: 'do' });
+  assert.equal(task.important, true);
+  assert.equal(task.urgent, true);
+});
+
+test('the matrix groups open tasks and flags an overloaded "Do now"', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'task-matrix-'));
+  const clock = () => new Date(Date.UTC(2026, 9, 14, 9));
+  const service = new TaskService(new JsonFileStore(join(dir, 'tasks.json')), clock, { urgentWithinDays: 3, doNowLimit: 1 });
+  await service.create({ title: 'One', placement: 'do' });
+  await service.create({ title: 'Two', placement: 'do' });
+  await service.create({ title: 'Later', placement: 'schedule' });
+
+  const matrix = await service.matrix();
+  assert.equal(matrix.today, '2026-10-14');
+  const [doNow, schedule] = matrix.quadrants;
+  assert.equal(doNow.tasks.length, 2);
+  assert.equal(doNow.overloaded, true);
+  assert.equal(schedule.tasks.length, 1);
+});

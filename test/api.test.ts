@@ -71,3 +71,31 @@ test('the UI page is served at /', async () => {
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type') ?? '', /text\/html/);
 });
+
+test('2.1–2.3 — capture with !1, read the matrix, then move a task', async () => {
+  const created = (await call('POST', '/api/capture', { text: 'Submit tax return !1' })).body;
+  assert.equal(created.important, true);
+
+  let matrix = (await call('GET', '/api/matrix')).body;
+  assert.equal(matrix.quadrants[0].id, 'do');
+  assert.ok(matrix.quadrants[0].tasks.some((t: { id: string }) => t.id === created.id));
+
+  const moved = await call('POST', `/api/tasks/${created.id}/place`, { quadrant: 'eliminate' });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.body.priority.placement, 'eliminate');
+
+  matrix = (await call('GET', '/api/matrix')).body;
+  const eliminate = matrix.quadrants.find((q: { id: string }) => q.id === 'eliminate');
+  assert.ok(eliminate.tasks.some((t: { id: string }) => t.id === created.id));
+});
+
+test('placing in an unknown quadrant gets a 400', async () => {
+  const created = (await call('POST', '/api/tasks', { title: 'Something' })).body;
+  const result = await call('POST', `/api/tasks/${created.id}/place`, { quadrant: 'later' });
+  assert.equal(result.status, 400);
+});
+
+test('open tasks in the list carry their priority', async () => {
+  const open = (await call('GET', '/api/tasks')).body;
+  assert.ok(open.every((t: { priority?: { placement: string } }) => typeof t.priority?.placement === 'string'));
+});

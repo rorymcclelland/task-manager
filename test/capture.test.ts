@@ -7,6 +7,7 @@ test('plain text becomes a manual task', () => {
     title: 'Renew car insurance',
     source: 'manual',
     url: null,
+    placement: 'untriaged',
   });
 });
 
@@ -15,6 +16,7 @@ test('a source tag sets the source and is removed from the title', () => {
     title: 'Send Sarah the budget',
     source: 'claude',
     url: null,
+    placement: 'untriaged',
   });
 });
 
@@ -35,6 +37,20 @@ test('unknown hashtags stay in the title', () => {
     title: 'Fix bug #42 in exporter',
     source: 'manual',
     url: null,
+    placement: 'untriaged',
   });
   assert.equal(parseCapture('Plan #offsite agenda').title, 'Plan #offsite agenda');
+});
+
+test('!1–!4 place the task on the matrix and are removed from the title', () => {
+  assert.equal(parseCapture('Pay VAT !1').placement, 'do');
+  assert.equal(parseCapture('!2 Plan Q1 roadmap').placement, 'schedule');
+  assert.equal(parseCapture('Book room !3 #claude').placement, 'delegate');
+  assert.equal(parseCapture('Tidy downloads !4').title, 'Tidy downloads');
+});
+
+test('an exclamation mark that is not !1–!4 stays in the title', () => {
+  assert.equal(parseCapture('Call Mum!').title, 'Call Mum!');
+  assert.equal(parseCapture('Fix bug !5').title, 'Fix bug !5');
+  assert.equal(parseCapture('Fix bug !5').placement, 'untriaged');
 });
