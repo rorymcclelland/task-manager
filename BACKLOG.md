@@ -1,6 +1,6 @@
 # Task Management App — Backlog
 
-_Last updated: 14 October 2026 · Status: agreed, build not started_
+_Last updated: 14 October 2026 · Status: Phases 0 and 1 built; Phase 2 next_
 
 Organised by **job to be done**, in phases. Each phase should be usable on its
 own — the aim is that the app earns its place from Phase 1, not after Phase 5.
@@ -10,7 +10,7 @@ _When [situation], I want to [motivation], so I can [outcome]._
 
 ---
 
-## Phase 0 — Foundations
+## Phase 0 — Foundations ✅
 
 The minimum scaffolding needed before anything else is worth writing.
 
@@ -26,7 +26,7 @@ The minimum scaffolding needed before anything else is worth writing.
 
 ---
 
-## Phase 1 — One list I can trust
+## Phase 1 — One list I can trust ✅
 
 _The single job that justifies the project: see everything in one place._
 

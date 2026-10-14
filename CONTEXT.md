@@ -47,17 +47,20 @@ Same working pattern as the Bolt prototypes:
 
 ## Current status
 
-Backlog agreed (see `BACKLOG.md`). **The build has not started.** Nothing in this
-folder is code yet.
+**Phase 0 and Phase 1 are built** (14 Oct 2026): a local web app with one list
+across all sources, quick capture, complete/drop with undo, and duplicate
+merging. Tasks are entered by hand for now — pulling them in automatically is
+Phase 3. See `README.md` to run it.
 
 ## Open decisions
 
-These are not settled and should be decided before or at the start of Phase 0:
+Settled on 14 Oct 2026 (reasons in `docs/DECISIONS.md`):
 
-1. **Stack.** Web app, desktop app, or local script + web UI?
-2. **Where data lives.** Local-first file or SQLite, versus a hosted database.
-   Local-first fits the "my own machine" framing and the sync folder this project
-   already lives in.
+- ~~Stack~~ → local Node + TypeScript web app (D1).
+- ~~Where data lives~~ → one JSON file behind a swappable storage interface (D2).
+
+Still open:
+
 3. **Lunatask integration route.** API, export file, or manual entry — depends on
    what Lunatask actually exposes, which needs checking.
 4. **Claude and Gemini capture route.** Whether tasks are pushed out of those
