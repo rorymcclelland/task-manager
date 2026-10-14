@@ -138,3 +138,14 @@ test('4.1–4.3 — /api/agenda lays tasks out by day; PATCH schedules a slot', 
   assert.equal((await call('GET', '/api/agenda?from=tomorrow')).status, 400);
   assert.equal((await call('GET', '/api/agenda?days=500')).status, 400);
 });
+
+test('5.2 — /api/review lists what needs a decision; keep resets the idle clock', async () => {
+  const created = (await call('POST', '/api/tasks', { title: 'Review me' })).body;
+  const queue = (await call('GET', '/api/review')).body;
+  assert.ok(queue.items.some((i: { task: { id: string } }) => i.task.id === created.id));
+  const kept = await call('POST', `/api/tasks/${created.id}/keep`);
+  assert.equal(kept.status, 200);
+  assert.equal(kept.body.priority.idleDays, 0);
+  const back = await call('POST', `/api/tasks/${created.id}/reviewed-at`, { reviewedAt: 'not a date' });
+  assert.equal(back.status, 400);
+});

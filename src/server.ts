@@ -7,6 +7,8 @@
 //   TASKS_FILE          where the task data lives (default: data/tasks.json in this folder)
 //   URGENT_WITHIN_DAYS  a task due within this many days counts as urgent (default 3)
 //   DO_NOW_LIMIT        "Do now" is flagged as overloaded above this many tasks (default 5)
+//   STALE_AFTER_DAYS    a task untouched this long is flagged idle (default 30)
+//   DO_NOW_STALE_AFTER_DAYS   …or this long, in "Do now" (default 7)
 //
 // Phase 3 — pulling in other systems (see README.md, "Sources"):
 //
@@ -41,6 +43,8 @@ const tasksFile = resolve(process.env.TASKS_FILE ?? join(import.meta.dirname, '.
 const settings: PrioritySettings = {
   urgentWithinDays: wholeNumber('URGENT_WITHIN_DAYS', DEFAULT_SETTINGS.urgentWithinDays),
   doNowLimit: wholeNumber('DO_NOW_LIMIT', DEFAULT_SETTINGS.doNowLimit),
+  staleAfterDays: wholeNumber('STALE_AFTER_DAYS', DEFAULT_SETTINGS.staleAfterDays),
+  doNowStaleAfterDays: wholeNumber('DO_NOW_STALE_AFTER_DAYS', DEFAULT_SETTINGS.doNowStaleAfterDays),
 };
 
 const service = new TaskService(new JsonFileStore(tasksFile), () => new Date(), settings);

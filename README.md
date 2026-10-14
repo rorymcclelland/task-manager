@@ -26,6 +26,8 @@ folder (copy `.env.example`) or set them before `npm start`:
 | `PORT` | `4321` | Which port the page is on |
 | `URGENT_WITHIN_DAYS` | `3` | Due within this many days = urgent |
 | `DO_NOW_LIMIT` | `5` | "Do now" is flagged above this many |
+| `STALE_AFTER_DAYS` | `30` | A task you haven't touched this long is flagged idle |
+| `DO_NOW_STALE_AFTER_DAYS` | `7` | …or this long, if it's in "Do now" |
 | `LUNATASK_TOKEN` | — | Turns on the Lunatask sync (see Sources) |
 | `LOCAL_FOLDERS` | — | Folders to scan for `- [ ]` and `TODO:` lines, separated by `;` |
 | `INBOX_FOLDER` | `data/inbox` | Where dropped-in task files are picked up |
@@ -49,7 +51,8 @@ on that file instead of your real one. It also makes a sample notes folder
 and leaves a file in a sample inbox, so the first sync has something to
 pick up, plus a sample calendar with meetings this week and tasks slotted
 into today and tomorrow; it never syncs your real Lunatask, notes, inbox or
-calendar. Due dates are set relative to today,
+calendar. One of its two calendars is missing on purpose, so you can see
+the red "hasn't synced" banner. The other one works. Due dates are set relative to today,
 so there's always something overdue, something due today and an overfull
 "Do now"; there are also two likely duplicates to merge and some closed
 tasks to reopen. Run it again to reset. The source links are made up, so
@@ -96,6 +99,7 @@ number. Set a due date in the edit panel (`e`).
 | `[` / `]` | Day view: the day before / after |
 | `t` | Day view, today |
 | `v` | next view: Matrix → Day → Ahead → List |
+| `r` | start a review |
 | `Esc` | leave a text box |
 
 **Due dates move tasks for you.** Anything due within 3 days, or overdue,
@@ -124,6 +128,37 @@ planned tasks and deadlines, then the next few deadlines after that. Click
 a day to open it in Day.
 
 In the matrix and list, a planned task shows *▸ Planned Thu 14:00*.
+
+### Keeping it honest
+
+**Idle tasks.** A task you haven't touched for 30 days, or 7 in "Do now",
+shows *◌ Idle 34 days*. Syncs don't count as touching it; editing, placing,
+scheduling or saying "still relevant" does. Tasks with a due date or
+planned day still ahead aren't flagged, because they're waiting on purpose.
+
+**Review.** The **Review** button (or `r`) shows how many tasks need a
+decision and walks through them one card at a time: unplaced tasks,
+unnamed Lunatask tasks, overdue, planned for a day that's gone, idle, then
+"Do now" if it's over its limit. Each card has the decisions that fit:
+
+| Key | On a review card |
+|---|---|
+| `1`–`4` | move it to that quadrant |
+| `k` | still relevant: keep it as it is (resets the idle clock) |
+| `x` / `d` | done / drop |
+| `n` | type its name (unnamed Lunatask tasks) |
+| `e` | edit |
+| `→` / `←` | skip / go back |
+| `Esc` | stop |
+
+Everything has an Undo. Skipped cards come back next time.
+
+**When a sync fails,** a red banner at the top says which source, since
+when and why, with a *Sync now* button. It also appears if a source hasn't
+synced successfully for over two sync intervals, in case a sync is stuck
+rather than failing. The source's filter chip gets a ⚠. If the page loses
+the app itself (say the terminal was closed), it says *Can't reach the app*
+until it's back.
 
 Completing, dropping and merging all show an **Undo** for a few seconds, and
 anything closed can be reopened from "Done, dropped and merged" at the bottom.
@@ -224,6 +259,7 @@ npm run typecheck
 | `src/duplicates.ts` | How likely duplicates are spotted |
 | `src/sync.ts` | Phase 3: the rules for mirroring another system's tasks |
 | `src/agenda.ts` | Phase 4: tasks and events laid out by day, and free time |
+| `src/review.ts` | Phase 5: what needs a decision, in what order |
 | `src/calendar/` | Phase 4: reading .ics calendars (`ics.ts`) and time zones (`zones.ts`) |
 | `src/sources/` | One file per source: Lunatask, local files, inbox folder, calendar |
 | `src/sync-runner.ts` | Runs the sources, on a timer and on "Sync now" |

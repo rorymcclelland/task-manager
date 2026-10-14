@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../src/store/json-file-store.ts';
 import { TaskService, ValidationError } from '../src/tasks.ts';
+import { DEFAULT_SETTINGS } from '../src/priority.ts';
 
 /** A service on a fresh temp file, with a clock that ticks one minute per call. */
 async function freshService() {
@@ -165,7 +166,7 @@ test('capture can place a task straight away', async () => {
 test('the matrix groups open tasks and flags an overloaded "Do now"', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'task-matrix-'));
   const clock = () => new Date(Date.UTC(2026, 9, 14, 9));
-  const service = new TaskService(new JsonFileStore(join(dir, 'tasks.json')), clock, { urgentWithinDays: 3, doNowLimit: 1 });
+  const service = new TaskService(new JsonFileStore(join(dir, 'tasks.json')), clock, { ...DEFAULT_SETTINGS, urgentWithinDays: 3, doNowLimit: 1 });
   await service.create({ title: 'One', placement: 'do' });
   await service.create({ title: 'Two', placement: 'do' });
   await service.create({ title: 'Later', placement: 'schedule' });
@@ -219,4 +220,36 @@ test('4.2 — on:/at: from capture creates a scheduled task', async () => {
   const task = await service.create({ title: 'Call', scheduledDate: '2026-10-16', slot: { start: '09:30', minutes: 30 } });
   assert.equal(task.scheduledDate, '2026-10-16');
   assert.deepEqual(task.slot, { start: '09:30', minutes: 30 });
+});
+
+// ---- Phase 5 -----------------------------------------------------------------------
+
+test('5.1 — creating, editing and placing all count as attention; keep resets it', async () => {
+  const service = await freshService();
+  const task = await service.create({ title: 'Something' });
+  assert.ok(task.reviewedAt);
+  const edited = await service.update(task.id, { notes: 'more' });
+  assert.ok(edited.reviewedAt! > task.reviewedAt!);
+  const kept = await service.keep(task.id);
+  assert.ok(kept.reviewedAt! > edited.reviewedAt!);
+  assert.equal(kept.notes, 'more');
+  // Undo for keep puts the old value back.
+  const undone = await service.setReviewedAt(task.id, edited.reviewedAt!);
+  assert.equal(undone.reviewedAt, edited.reviewedAt);
+});
+
+test('5.2 — the review queue: unplaced first, each task once', async () => {
+  const service = await freshService();
+  await service.create({ title: 'Unplaced' });
+  await service.create({ title: 'Overdue and unplaced', dueDate: '2026-10-01' });
+  await service.create({ title: 'Overdue, placed', dueDate: '2026-10-01', placement: 'schedule' });
+  await service.create({ title: 'Fine', placement: 'schedule' });
+  const queue = await service.review();
+  assert.deepEqual(queue.items.map((i) => [i.task.title, i.reason]), [
+    ['Unplaced', 'untriaged'],
+    ['Overdue and unplaced', 'untriaged'],
+    ['Overdue, placed', 'overdue'],
+  ]);
+  assert.deepEqual(queue.items[1].reasons, ['untriaged', 'overdue']);
+  assert.equal(queue.counts.overdue, 2);
 });

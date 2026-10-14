@@ -12,9 +12,9 @@
 // memory, refreshed with the other sources (every 15 minutes, and on "Sync
 // now"), and expanded into the days the page asks for.
 //
-// If a calendar can't be fetched, the last copy that worked is kept and the
-// sync says how old it is — a calendar that quietly stops updating is
-// worse than one that says it has.
+// If a calendar can't be fetched, the last copy that worked is kept, and the
+// sync counts as failed (5.3) with a message saying how old that copy is —
+// a calendar that quietly stops updating is worse than one that says it has.
 
 import { readFile } from 'node:fs/promises';
 import { occurrences, parseCalendar, type Occurrence, type ParsedCalendar } from '../calendar/ics.ts';
@@ -68,8 +68,9 @@ export class Calendars {
   }
 
   /**
-   * Fetch every calendar again. One failing doesn't stop the others; if they
-   * all fail, it throws so the Sources line shows an error.
+   * Fetch every calendar again. One failing doesn't stop the others being
+   * fetched, but if any fails it throws afterwards (5.3), so the failure
+   * shows as an error, not a footnote. The others are updated either way.
    */
   async refresh(): Promise<{ summary: string; warnings: string[] }> {
     const warnings: string[] = [];
@@ -93,7 +94,7 @@ export class Calendars {
       }
     }
 
-    if (failed === this.feeds.length) throw new CalendarError(warnings.join(' '));
+    if (failed > 0) throw new CalendarError(warnings.join(' '));
     const names = this.names().join(', ');
     return { summary: `${names} · ${events} event${events === 1 ? '' : 's'}${failed ? ` · ${failed} failed` : ''}`, warnings };
   }

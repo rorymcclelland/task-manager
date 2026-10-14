@@ -1,6 +1,6 @@
 # Task Management App — Backlog
 
-_Last updated: 14 October 2026 · Status: Phases 0–4 built; Phase 5 next_
+_Last updated: 14 October 2026 · Status: Phases 0–5 built; Phase 6 is the deferred list_
 
 Organised by **job to be done**, in phases. Each phase should be usable on its
 own — the aim is that the app earns its place from Phase 1, not after Phase 5.
@@ -111,17 +111,26 @@ grid; free time that knows weekends from weekdays._
 
 ---
 
-## Phase 5 — Keeping it honest
+## Phase 5 — Keeping it honest ✅
 
 The maintenance jobs that decide whether the system survives month two.
 
 - **5.1** When tasks go stale, I want them flagged, so the list does not quietly
-  fill with things I will never do. _(A start: Ahead already lists tasks
-  planned for a day that's gone and still open.)_
+  fill with things I will never do.
 - **5.2** When I sit down to review, I want a review flow — triage, re-prioritise,
   drop — so the review is a few minutes rather than an afternoon.
 - **5.3** When a sync fails, I want to know, so I never trust a list that has
   silently stopped updating.
+
+_Built as: tasks untouched for 30 days (7 in Do now) with no date ahead are
+flagged idle; syncs don't count as touching (D14). A Review button opens
+one card at a time: unplaced, unnamed, overdue, missed, idle, then an
+overfull Do now, each with keyed actions and Undo (D15). A failed or stuck
+sync, or losing the app's server, puts a red banner at the top (D16)._
+
+_Possible follow-ups: a "last reviewed" date and a weekly nudge; write
+completion back to Lunatask (D8), now that the review makes completing
+here more common._
 
 ---
 

@@ -30,7 +30,7 @@ const QUADRANTS = /** @type {const} */ ({
   untriaged: { label: 'Not placed yet', hint: 'Drag onto the matrix, or select and press 1–4', key: '0' },
 });
 
-/** @typedef {'matrix'|'day'|'ahead'|'list'} View */
+/** @typedef {'matrix'|'day'|'ahead'|'list'|'review'} View */
 /** The order `v` cycles through, matching the buttons. */
 const VIEWS = /** @type {View[]} */ (['matrix', 'day', 'ahead', 'list']);
 
@@ -59,6 +59,11 @@ const state = {
   /** @type {string | null} */ selectedId: null,
   /** @type {string | null} */ editingId: null,
   loadedOnce: false,
+  /** 5.2: the review queue from /api/review, and the review in progress. */
+  /** @type {any} */ reviewQueue: null,
+  /** @type {any} */ review: null,
+  /** 5.3: when the page last failed to reach the server; null while it can. */
+  /** @type {string | null} */ serverDownSince: null,
 };
 
 const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
@@ -76,8 +81,27 @@ async function api(method, path, body) {
   return data;
 }
 
+/**
+ * Fetch everything and redraw. 5.3: if the server can't be reached, say so
+ * in a banner rather than keep showing a page that looks current.
+ */
 async function refresh() {
-  const [open, closed, duplicates, matrix, sync, dayAgenda, ahead] = await Promise.all([
+  try {
+    await load();
+    if (state.serverDownSince) {
+      state.serverDownSince = null;
+      render();
+    }
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error; // a real error from the server, not "unreachable"
+    state.serverDownSince ??= new Date().toISOString();
+    renderAlerts();
+    throw error;
+  }
+}
+
+async function load() {
+  const [open, closed, duplicates, matrix, sync, dayAgenda, ahead, reviewQueue] = await Promise.all([
     api('GET', '/api/tasks?view=open'),
     api('GET', '/api/tasks?view=closed'),
     api('GET', '/api/duplicates'),
@@ -85,8 +109,9 @@ async function refresh() {
     api('GET', '/api/sync'),
     api('GET', `/api/agenda?days=1${state.day ? `&from=${state.day}` : ''}`),
     api('GET', '/api/agenda?days=14'),
+    api('GET', '/api/review'),
   ]);
-  Object.assign(state, { open, closed, duplicates, matrix, sync, dayAgenda, ahead });
+  Object.assign(state, { open, closed, duplicates, matrix, sync, dayAgenda, ahead, reviewQueue });
   state.day = dayAgenda.from;
 
   // 2.2: on first load, put the cursor on the top task in "Do now", so the
@@ -110,19 +135,27 @@ function render() {
   if (state.selectedId && !visible.some((t) => t.id === state.selectedId)) state.selectedId = null;
 
   const doNow = quadrant('do')?.tasks.length ?? 0;
-  $('count').textContent = `${state.open.length} open · ${doNow} to do now`;
+  const idle = state.open.filter((t) => t.priority?.stale).length;
+  $('count').textContent = `${state.open.length} open · ${doNow} to do now` + (idle ? ` · ${idle} idle` : '');
+  renderAlerts();
+  renderReviewButton();
   renderViewSwitch();
   renderFilters();
   renderSources();
   renderDuplicates();
 
-  for (const view of VIEWS) $(view).hidden = state.view !== view;
+  for (const view of [...VIEWS, 'review']) $(view).hidden = state.view !== view;
+  // While reviewing, only the card (and any alert) is on screen.
+  const reviewing = state.view === 'review';
+  $('duplicates').hidden = reviewing || state.duplicates.length === 0;
+  for (const id of ['closed', 'capture', 'capture-error', 'filters', 'sources']) $(id).hidden = reviewing;
   document.querySelector('.page')?.classList.toggle('is-wide', state.view === 'matrix' || state.view === 'day');
   $('empty').hidden = true;
   if (state.view === 'matrix') renderMatrix();
   if (state.view === 'day') renderDay();
   if (state.view === 'ahead') renderAhead();
   if (state.view === 'list') renderList(visible);
+  if (state.view === 'review') renderReview();
   renderClosed();
 }
 
@@ -130,6 +163,10 @@ function render() {
  *  on screen — so j/k always move to the task you'd expect. A merged task
  *  counts for every system it lives in, not just where it started. */
 function visibleTasks() {
+  if (state.view === 'review') {
+    const task = currentReviewTask();
+    return task ? [task] : [];
+  }
   if (state.view === 'day' || state.view === 'ahead') {
     // These views show a task in several places (a task can be due one day
     // and planned for another), so j/k visit each one once, top to bottom.
@@ -155,7 +192,8 @@ function renderViewSwitch() {
 
 function setView(view) {
   state.view = view;
-  history.replaceState(null, '', view === 'matrix' ? location.pathname : `#${view}`);
+  // A review is a session, not a place to come back to, so it gets no address.
+  if (view !== 'review') history.replaceState(null, '', view === 'matrix' ? location.pathname : `#${view}`);
   render();
 }
 
@@ -269,6 +307,12 @@ function renderFilters() {
 
     const button = el('button', { type: 'button', 'aria-pressed': String(state.filter === option) },
       option === 'all' ? 'All' : SOURCE_LABELS[option]);
+    // 5.3: a source whose sync is failing says so wherever its tasks are counted.
+    if (option !== 'all' && unhealthySources().includes(option)) {
+      button.classList.add('is-unhealthy');
+      button.prepend(el('span', { class: 'warn-mark', 'aria-hidden': 'true' }, '⚠ '));
+      button.setAttribute('title', `${SOURCE_LABELS[option]} isn't syncing — its tasks may be out of date`);
+    }
     button.append(el('span', { class: 'n' }, String(count)));
     button.addEventListener('click', () => { state.filter = /** @type {any} */ (option); render(); });
     nav.append(button);
@@ -287,12 +331,13 @@ function renderSources() {
 
   for (const source of state.sync) {
     const run = source.lastRun;
-    let health = 'off';
-    let text = 'not set up';
-    if (source.configured && !run) { health = 'pending'; text = 'not synced yet'; }
-    if (run && run.ok) { health = run.warnings.length ? 'warn' : 'ok'; text = `${timeOf(run.at)} · ${run.summary}`; }
-    if (run && !run.ok) { health = 'error'; text = `failed ${timeOf(run.at)}`; }
-    if (health === 'error' || health === 'warn') problems++;
+    // 5.3: the server decides how healthy each source is (sync-runner.ts).
+    const health = source.health;
+    let text = { off: 'not set up', pending: 'not synced yet', ok: '', warn: '', error: '', stale: '' }[health];
+    if (run && run.ok) text = `${timeOf(run.at)} · ${run.summary}`;
+    if (run && !run.ok) text = `failed ${timeOf(run.at)}` + (source.failures > 1 ? ` (${source.failures} in a row)` : '');
+    if (health === 'stale') text = source.lastSuccessAt ? `last worked ${timeOf(source.lastSuccessAt)}` : 'hasn\'t synced yet';
+    if (health === 'error' || health === 'warn' || health === 'stale') problems++;
 
     chips.append(el('span', { class: 'source-chip', 'data-health': health, title: text },
       el('span', { class: 'dot' }), source.label));
@@ -300,7 +345,8 @@ function renderSources() {
     const detail = el('div', { class: 'source-detail', 'data-health': health },
       el('h3', {}, source.label, el('span', { class: 'source-state' }, text)),
       el('p', { class: 'source-setup' }, source.setup));
-    if (run?.error) detail.append(el('p', { class: 'source-error' }, run.error));
+    if (source.problem) detail.append(el('p', { class: 'source-error' }, source.problem));
+    else if (run?.error) detail.append(el('p', { class: 'source-error' }, run.error));
     if (run?.warnings.length) {
       detail.append(el('ul', { class: 'source-warnings' }, ...run.warnings.slice(0, 5).map((w) => el('li', {}, w))));
     }
@@ -392,6 +438,8 @@ function taskRow(task) {
   if (state.view === 'list' && task.priority) meta.append(quadrantChip(task.priority.placement));
   const due = dueChip(task);
   if (due) meta.append(due);
+  // 5.1: untouched for too long.
+  if (task.priority?.stale) meta.append(idleChip(task));
   // 4.2: when it's scheduled. Left out in Day/Ahead, where where it sits says so.
   const scheduled = state.view === 'matrix' || state.view === 'list' ? scheduledChip(task) : null;
   if (scheduled) meta.append(scheduled);
@@ -1125,6 +1173,308 @@ function scheduledChip(task) {
   return chip;
 }
 
+// ---- Keeping it honest: alerts (5.3) -------------------------------------------
+
+/** Which task sources (as the filter chips name them) have a sync problem. */
+function unhealthySources() {
+  const map = { lunatask: 'lunatask', local: 'local' }; // connectors whose tasks have their own source
+  return state.sync
+    .filter((s) => (s.health === 'error' || s.health === 'stale') && map[s.id])
+    .map((s) => map[s.id]);
+}
+
+/**
+ * The banner at the top: anything that means the list on screen can't be
+ * trusted right now. Quiet when all is well — it only exists to be noticed.
+ */
+function renderAlerts() {
+  const box = $('alerts');
+  const alerts = [];
+
+  if (state.serverDownSince) {
+    alerts.push(el('div', { class: 'alert' },
+      el('strong', {}, `Can't reach the app since ${timeOf(state.serverDownSince)}. `),
+      'Is npm start still running? Nothing below has updated since then, and changes won\'t save until it\'s back.'));
+  }
+
+  for (const source of state.sync.filter((s) => s.health === 'error' || s.health === 'stale')) {
+    const retry = el('button', { type: 'button' }, state.syncing ? 'Syncing…' : 'Sync now');
+    if (state.syncing) retry.setAttribute('disabled', '');
+    retry.addEventListener('click', () => syncNow());
+    alerts.push(el('div', { class: 'alert' }, el('span', {}, source.problem), retry));
+  }
+
+  box.replaceChildren(...alerts);
+  box.hidden = alerts.length === 0;
+}
+
+// ---- Keeping it honest: idle tasks (5.1) -----------------------------------------
+
+function idleChip(task) {
+  const days = task.priority.idleDays;
+  const limit = task.priority.placement === 'do' ? state.matrix?.settings.doNowStaleAfterDays : state.matrix?.settings.staleAfterDays;
+  return el('span', { class: 'idle', title: `You haven't touched this for ${days} days (the limit ${task.priority.placement === 'do' ? 'in Do now ' : ''}is ${limit}). Review it: still relevant, move it, or drop it.` },
+    `Idle ${days} days`);
+}
+
+// ---- Keeping it honest: the review (5.2) ------------------------------------------
+//
+// A review is a queue of cards, fixed when it starts: one task each, with
+// the reason it's there and the decisions that fit. Acting on a card moves
+// to the next. Every action has the usual Undo. The queue doesn't reshuffle
+// as you go — a task you've just placed doesn't jump to a new position.
+
+/** What each reason says on its card: a heading and the question it asks. */
+const REVIEW_COPY = {
+  untriaged: { label: 'Not placed yet', also: 'not placed yet', ask: 'Where does it belong? Place it on the matrix, or drop it if it isn\'t real.' },
+  unnamed: { label: 'Needs a name', also: 'needs a name', ask: 'Lunatask keeps names encrypted, so this one arrived without one. Open it in Lunatask, then type its name here.' },
+  overdue: { label: 'Overdue', also: 'overdue', ask: 'Still needed? Give it a new due date, finish it, or drop it.' },
+  missed: { label: 'Planned for a day that\'s gone', also: 'planned for a day that\'s gone', ask: 'Plan it again, take it off the plan, or decide it isn\'t happening.' },
+  stale: { label: 'Idle', also: 'idle', ask: 'Nothing has happened to this for a while. Still relevant? Keep it, move it, or let it go.' },
+  overload: { label: 'Do now is over its limit', also: '"Do now" is over its limit', ask: 'Does this really have to be done now? Move it to Schedule or Delegate if not.' },
+};
+
+function renderReviewButton() {
+  const n = state.reviewQueue?.items.length ?? 0;
+  $('review-count').textContent = String(n);
+  $('review-button').classList.toggle('has-items', n > 0);
+  $('review-button').setAttribute('aria-pressed', String(state.view === 'review'));
+}
+
+function startReview() {
+  const items = state.reviewQueue?.items ?? [];
+  state.review = {
+    queue: items.map((i) => ({ id: i.task.id, reason: i.reason, reasons: i.reasons })),
+    index: 0,
+    tally: { placed: 0, kept: 0, done: 0, dropped: 0, rescheduled: 0, named: 0, skipped: 0 },
+  };
+  state.editingId = null;
+  setView('review');
+}
+
+function finishReview() {
+  state.review = null;
+  state.editingId = null;
+  setView('matrix');
+}
+
+/** The task on the current card, if it's still open. */
+function currentReviewTask() {
+  const item = state.review?.queue[state.review.index];
+  return item ? state.open.find((t) => t.id === item.id) ?? null : null;
+}
+
+/** Move on, past any cards whose task has closed since the review started. */
+function nextCard(tallyKey) {
+  const review = state.review;
+  if (!review) return;
+  if (tallyKey) review.tally[tallyKey]++;
+  review.index++;
+  while (review.index < review.queue.length && !state.open.some((t) => t.id === review.queue[review.index].id)) review.index++;
+  state.editingId = null;
+  render();
+}
+
+function previousCard() {
+  const review = state.review;
+  if (!review || review.index === 0) return;
+  review.index--;
+  while (review.index > 0 && !state.open.some((t) => t.id === review.queue[review.index].id)) review.index--;
+  state.editingId = null;
+  render();
+}
+
+function renderReview() {
+  const container = $('review');
+  const review = state.review;
+  if (!review) return finishReview();
+
+  const total = review.queue.length;
+  const finish = el('button', { type: 'button', title: 'Esc' }, review.index >= total ? 'Back to the matrix' : 'Stop here');
+  finish.addEventListener('click', finishReview);
+  const header = el('header', { class: 'review-header' },
+    el('h2', {}, 'Review'),
+    el('span', { class: 'review-progress' }, total ? `${Math.min(review.index + 1, total)} of ${total}` : ''),
+    finish);
+  const bar = el('div', { class: 'review-bar' }, el('span', { style: `width:${total ? (Math.min(review.index, total) / total) * 100 : 100}%` }));
+
+  if (review.index >= total) {
+    container.replaceChildren(header, bar, reviewSummary(review));
+    return;
+  }
+
+  const item = review.queue[review.index];
+  const task = currentReviewTask();
+  if (!task) {
+    // Closed since the review started — by a sync, or another tab. (Right
+    // after you finish a card this shows for a moment before the next one.)
+    const next = el('button', { type: 'button', class: 'primary' }, 'Next');
+    next.addEventListener('click', () => nextCard(null));
+    container.replaceChildren(header, bar, el('section', { class: 'review-card' },
+      el('p', { class: 'review-ask' }, 'This one has been closed since the review started.'), el('div', { class: 'review-actions' }, next)));
+    return;
+  }
+  container.replaceChildren(header, bar, reviewCard(task, item));
+}
+
+function reviewCard(task, item) {
+  const copy = REVIEW_COPY[item.reason];
+  const card = el('section', { class: 'review-card', 'data-reason': item.reason });
+
+  // Heading: the reason, made specific to this task.
+  let heading = copy.label;
+  if (item.reason === 'overdue') {
+    const days = -task.priority.dueInDays;
+    heading = `Overdue by ${days} day${days === 1 ? '' : 's'}`;
+  }
+  if (item.reason === 'missed') heading = `Planned for ${dayName(task.scheduledDate, state.ahead?.today ?? state.matrix.today)}, not done`;
+  if (item.reason === 'stale') heading = `Idle for ${task.priority.idleDays} days`;
+  if (item.reason === 'overload') heading = `Do now is over its limit (${quadrant('do').tasks.length} / ${state.matrix.settings.doNowLimit})`;
+  const others = item.reasons.filter((r) => r !== item.reason).map((r) => REVIEW_COPY[r].also);
+
+  card.append(
+    el('p', { class: 'review-reason' }, heading),
+    el('p', { class: 'review-ask' }, copy.ask + (others.length ? ` (Also: ${others.join(', ')}.)` : '')),
+  );
+
+  // The task itself, as a normal row — so the source link, due date and
+  // edit panel all work the way they do everywhere else.
+  card.append(el('ul', { class: 'list' }, taskRow(task)));
+
+  if (item.reason === 'unnamed') card.append(nameForm(task));
+
+  // The decisions. Keys match the rest of the app where there's a match.
+  const actions = el('div', { class: 'review-actions' });
+  const button = (label, key, action, extraClass = '') => {
+    const b = el('button', { type: 'button', class: extraClass, title: key ? `${label} (${key})` : label }, label);
+    if (key) b.append(el('kbd', {}, key));
+    b.addEventListener('click', action);
+    actions.append(b);
+  };
+
+  const placeGroup = (current) => {
+    for (const id of ['do', 'schedule', 'delegate', 'eliminate']) {
+      if (id === current) continue;
+      button(QUADRANTS[id].label, QUADRANTS[id].key, () => reviewDo('place', task, id));
+    }
+  };
+
+  if (item.reason === 'overdue') {
+    button('Due tomorrow', null, () => reviewDo('due', task, addDays(state.matrix.today, 1)));
+    button('Due in a week', null, () => reviewDo('due', task, addDays(state.matrix.today, 7)));
+    button('No due date', null, () => reviewDo('due', task, null));
+  }
+  if (item.reason === 'missed') {
+    button('Plan for today', null, () => reviewDo('plan', task, state.matrix.today));
+    button('Plan for tomorrow', null, () => reviewDo('plan', task, addDays(state.matrix.today, 1)));
+    button('Unplan', null, () => reviewDo('plan', task, null));
+  }
+  if (item.reason !== 'unnamed') placeGroup(task.priority.placement === 'untriaged' ? null : task.priority.placement);
+  if (item.reason !== 'untriaged' && item.reason !== 'unnamed') button('Still relevant', 'k', () => reviewDo('keep', task), 'primary');
+  button('Done', 'x', () => reviewDo('done', task));
+  button('Drop', 'd', () => reviewDo('drop', task), 'danger');
+  button('Edit', 'e', () => toggleEdit(task.id));
+  button('Skip', '→', () => nextCard('skipped'));
+  card.append(actions);
+  return card;
+}
+
+/** For unnamed Lunatask tasks: a name box right on the card. */
+function nameForm(task) {
+  const input = el('input', { type: 'text', placeholder: 'Its name in Lunatask… (press n to type here)', 'aria-label': 'Task name' });
+  const save = el('button', { type: 'submit', class: 'primary' }, 'Save name');
+  const form = el('form', { class: 'review-name' }, input, save);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!input.value.trim()) return;
+    await api('PATCH', `/api/tasks/${task.id}`, { title: input.value });
+    showToast(`Named: ${input.value.trim()}`, () => api('PATCH', `/api/tasks/${task.id}`, { title: task.title }));
+    await refresh();
+    nextCard('named');
+  });
+  // Not focused automatically: the card's other keys (→, d, x) should keep
+  // working until you choose to type. `n` puts the cursor here.
+  return form;
+}
+
+/** Carry out one card's decision, then move to the next card. */
+async function reviewDo(action, task, value) {
+  try {
+    if (action === 'place') { await place(task, value); nextCard('placed'); return; }
+    if (action === 'done') { await complete(task); nextCard('done'); return; }
+    if (action === 'drop') { await dropTask(task); nextCard('dropped'); return; }
+    if (action === 'plan') {
+      await schedule(task, { scheduledDate: value, slot: null });
+      nextCard('rescheduled');
+      return;
+    }
+    if (action === 'due') {
+      const before = task.dueDate;
+      await api('PATCH', `/api/tasks/${task.id}`, { dueDate: value });
+      showToast(value ? `Now due ${dayWord(value, state.matrix.today)}: ${task.title}` : `No due date: ${task.title}`,
+        () => api('PATCH', `/api/tasks/${task.id}`, { dueDate: before }));
+      await refresh();
+      nextCard('rescheduled');
+      return;
+    }
+    if (action === 'keep') {
+      const before = task.reviewedAt ?? null;
+      await api('POST', `/api/tasks/${task.id}/keep`);
+      showToast(`Kept as it is: ${task.title}`, () => api('POST', `/api/tasks/${task.id}/reviewed-at`, { reviewedAt: before }));
+      await refresh();
+      nextCard('kept');
+    }
+  } catch (error) {
+    showToast(error.message, null);
+  }
+}
+
+function reviewSummary(review) {
+  const t = review.tally;
+  const parts = [
+    [t.placed, 'placed'], [t.named, 'named'], [t.rescheduled, 'given a new date'], [t.kept, 'kept as they are'],
+    [t.done, 'done'], [t.dropped, 'dropped'], [t.skipped, 'skipped'],
+  ].filter(([n]) => n > 0).map(([n, words]) => `${n} ${words}`);
+  const remaining = state.reviewQueue?.items.length ?? 0;
+  const back = el('button', { type: 'button', class: 'primary' }, 'Back to the matrix');
+  back.addEventListener('click', finishReview);
+  return el('section', { class: 'review-card review-done' },
+    el('p', { class: 'review-reason' }, review.queue.length ? 'Review done' : 'Nothing to review'),
+    el('p', { class: 'review-ask' }, review.queue.length
+      ? `${parts.join(' · ') || 'Nothing changed'}.` + (remaining ? ` ${remaining} still need${remaining === 1 ? 's' : ''} a decision — skipped ones come back next time.` : ' Everything is placed, current and believable.')
+      : 'Everything is placed, nothing is overdue or idle, and Do now is within its limit.'),
+    el('div', { class: 'review-actions' }, back));
+}
+
+/** Keys while reviewing. Returns true if it handled the key. */
+function reviewKey(event) {
+  if (state.view !== 'review' || !state.review) return false;
+  const task = currentReviewTask();
+  if (event.key === 'Escape') { finishReview(); return true; }
+  if (!task) return false;
+  const item = state.review.queue[state.review.index];
+  switch (event.key) {
+    case 'ArrowRight': nextCard('skipped'); return true;
+    case 'ArrowLeft': previousCard(); return true;
+    case 'n': {
+      const nameBox = /** @type {HTMLInputElement | null} */ ($('review').querySelector('.review-name input'));
+      if (!nameBox) return false; // not a naming card: n adds a task as usual
+      nameBox.focus();
+      return true;
+    }
+    case 'k': if (item.reason !== 'untriaged' && item.reason !== 'unnamed') reviewDo('keep', task); return true;
+    case 'x': reviewDo('done', task); return true;
+    case 'd': reviewDo('drop', task); return true;
+    case '1': case '2': case '3': case '4': {
+      if (item.reason === 'unnamed') return true;
+      const placement = Object.keys(QUADRANTS).find((id) => QUADRANTS[id].key === event.key);
+      if (placement !== task.priority.placement) reviewDo('place', task, placement);
+      return true;
+    }
+  }
+  return false; // e, o and the rest work as usual
+}
+
 // ---- Actions --------------------------------------------------------------
 
 const reopen = (task) => () => api('POST', `/api/tasks/${task.id}/reopen`);
@@ -1296,6 +1646,8 @@ document.addEventListener('keydown', (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   // Let Enter/Space activate whichever button or link has focus as normal.
   if (target.matches('button, a') && (event.key === 'Enter' || event.key === ' ')) return;
+  // 5.2: the review has its own keys for the card in front of you.
+  if (reviewKey(event)) { event.preventDefault(); return; }
 
   const visible = visibleTasks();
   const index = visible.findIndex((t) => t.id === state.selectedId);
@@ -1349,7 +1701,10 @@ document.addEventListener('keydown', (event) => {
       if (selected) toggle(selected, 'urgent');
       break;
     case 'v':
-      setView(VIEWS[(VIEWS.indexOf(state.view) + 1) % VIEWS.length]);
+      setView(VIEWS[(VIEWS.indexOf(/** @type {any} */ (state.view)) + 1) % VIEWS.length]);
+      break;
+    case 'r':
+      if (state.view !== 'review') startReview();
       break;
     // Phase 4.
     case 's':
@@ -1400,6 +1755,8 @@ function el(tag, attributes = {}, ...children) {
 
 // ---- Start --------------------------------------------------------------------
 
+$('review-button').addEventListener('click', () => (state.view === 'review' ? finishReview() : startReview()));
+
 for (const button of document.querySelectorAll('#view-switch button')) {
   button.addEventListener('click', () => setView(/** @type {any} */ (button.getAttribute('data-view'))));
 }
@@ -1417,6 +1774,10 @@ setInterval(() => {
   const typing = document.activeElement?.matches('input, textarea, select');
   if (!document.hidden && !state.editingId && !typing && !state.syncing) refresh().catch(() => {});
 }, 60_000);
+
+// 5.3: while the server is unreachable, check every 10 seconds so the
+// banner clears as soon as it's back.
+setInterval(() => { if (state.serverDownSince && !document.hidden) refresh().catch(() => {}); }, 10_000);
 
 refresh().catch((error) => {
   $('empty').hidden = false;

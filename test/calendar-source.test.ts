@@ -30,14 +30,13 @@ test('fetches a webcal:// calendar and names it from the file', async () => {
   assert.equal(occurrences[0].calendar, 'Home');
 });
 
-test('a failed fetch keeps the last good copy, and says so', async () => {
+test('5.3 — one calendar failing is a failure, but its last good copy stays', async () => {
   const calendars = new Calendars(['https://example.com/a.ics', 'https://example.com/b.ics'], {
     fetchFn: fakeFetch([new Response(ICS), new Response(ICS), null, new Response(ICS)]),
     now: () => new Date('2026-10-14T10:00:00Z'),
   });
   await calendars.refresh();
-  const second = await calendars.refresh();
-  assert.match(second.warnings[0], /offline.*Still showing the copy from 2026-10-14 10:00/);
+  await assert.rejects(calendars.refresh(), /offline.*Still showing the copy from 2026-10-14 10:00/);
   assert.equal(calendars.between('2026-10-16', '2026-10-16', 'UTC').occurrences.length, 2);
 });
 

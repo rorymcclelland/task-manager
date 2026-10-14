@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Task } from '../src/model.ts';
-import { buildMatrix, daysBetween, prioritise, type PrioritySettings } from '../src/priority.ts';
+import { buildMatrix, daysBetween, DEFAULT_SETTINGS, prioritise, type PrioritySettings } from '../src/priority.ts';
 
 const TODAY = '2026-10-14'; // a Wednesday
-const SETTINGS: PrioritySettings = { urgentWithinDays: 3, doNowLimit: 2 };
+const SETTINGS: PrioritySettings = { ...DEFAULT_SETTINGS, urgentWithinDays: 3, doNowLimit: 2 };
 
 let counter = 0;
 /** A minimal open task; override whatever a test cares about. */
@@ -108,4 +108,36 @@ test('2.5 — other quadrants have no limit', () => {
   const schedule = buildMatrix(many, TODAY, SETTINGS).quadrants[1];
   assert.equal(schedule.limit, null);
   assert.equal(schedule.overloaded, false);
+});
+
+// ---- 5.1: staleness ---------------------------------------------------------------
+
+const STALE = { ...DEFAULT_SETTINGS, staleAfterDays: 30, doNowStaleAfterDays: 7 };
+
+test('5.1 — untouched for 30 days is stale; 29 is not', () => {
+  const at = (days: number) => new Date(Date.parse(`${TODAY}T12:00:00Z`) - days * 86_400_000).toISOString();
+  const placed = { important: true, urgent: false };
+  assert.equal(prioritise(task({ ...placed, reviewedAt: at(30) }), TODAY, STALE).stale, true);
+  assert.equal(prioritise(task({ ...placed, reviewedAt: at(29) }), TODAY, STALE).stale, false);
+  assert.equal(prioritise(task({ ...placed, reviewedAt: at(30) }), TODAY, STALE).idleDays, 30);
+});
+
+test('5.1 — "Do now" goes stale after 7 days', () => {
+  const t = task({ important: true, urgent: true, reviewedAt: '2026-10-07T10:00:00.000Z' });
+  assert.equal(prioritise(t, TODAY, STALE).stale, true);
+  assert.equal(prioritise({ ...t, important: false }, TODAY, STALE).stale, false); // "Delegate": 30 days
+});
+
+test('5.1 — a date still to come means parked on purpose, not stale', () => {
+  const old = { important: true, urgent: false, reviewedAt: '2026-06-01T10:00:00.000Z' };
+  assert.equal(prioritise(task({ ...old, dueDate: '2026-11-30' }), TODAY, STALE).stale, false);
+  assert.equal(prioritise(task({ ...old, scheduledDate: '2026-10-20' }), TODAY, STALE).stale, false);
+  assert.equal(prioritise(task({ ...old, scheduledDate: '2026-10-01' }), TODAY, STALE).stale, true); // that day's gone
+});
+
+test('5.1 — without reviewedAt: last edit for your own tasks, created date for mirrored ones', () => {
+  const edited = task({ createdAt: '2026-06-01T10:00:00.000Z', updatedAt: '2026-10-10T10:00:00.000Z' });
+  assert.equal(prioritise(edited, TODAY, STALE).idleDays, 4);
+  const mirrored = { ...edited, mirror: { detail: 'Lunatask: next', openInSource: true, placeholderTitle: false } };
+  assert.equal(prioritise(mirrored, TODAY, STALE).idleDays, 135);
 });

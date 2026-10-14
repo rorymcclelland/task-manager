@@ -70,6 +70,12 @@ export interface Task {
   updatedAt: string;
   /** When the task left "open" (done, dropped or merged). Null while open. */
   closedAt: string | null;
+  /** Phase 5 (5.1): the last time *you* paid it attention — created it,
+   *  edited, placed or scheduled it, or said it's still relevant. Syncs
+   *  never set it, so a task Lunatask keeps touching can still go stale.
+   *  Missing on tasks saved before Phase 5; see `lastAttention` in
+   *  priority.ts for what's used instead. */
+  reviewedAt?: string;
 
   /** Only on tasks a sync keeps up to date (Lunatask, files on this
    *  computer). Missing on everything else, including tasks saved before

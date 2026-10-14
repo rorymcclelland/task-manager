@@ -49,9 +49,14 @@ export interface PrioritySettings {
   urgentWithinDays: number;
   /** "Do now" is flagged as overloaded above this many tasks (2.5). */
   doNowLimit: number;
+  /** 5.1: a task you haven't touched for this many days is flagged idle… */
+  staleAfterDays: number;
+  /** …except in "Do now", where it's this many: urgent for a week and
+   *  still not done usually means it isn't urgent, or isn't happening. */
+  doNowStaleAfterDays: number;
 }
 
-export const DEFAULT_SETTINGS: PrioritySettings = { urgentWithinDays: 3, doNowLimit: 5 };
+export const DEFAULT_SETTINGS: PrioritySettings = { urgentWithinDays: 3, doNowLimit: 5, staleAfterDays: 30, doNowStaleAfterDays: 7 };
 
 /** Why a task is (or isn't) urgent — shown in the UI so the rule is visible. */
 export type UrgencyReason =
@@ -67,6 +72,11 @@ export interface Priority {
   urgencyReason: UrgencyReason;
   /** Days until due: 0 = today, 1 = tomorrow, negative = overdue. Null if no due date. */
   dueInDays: number | null;
+  /** 5.1: whole days since you last paid it attention. */
+  idleDays: number;
+  /** 5.1: idle past the limit for its quadrant, with nothing ahead of it
+   *  (no due date or planned day still to come). See `isStale`. */
+  stale: boolean;
 }
 
 export type PrioritisedTask = Task & { priority: Priority };
@@ -94,7 +104,37 @@ export function prioritise(task: Task, today: string, settings: PrioritySettings
     urgencyReason = 'undecided';
   }
 
-  return { placement: placementOf(task.important, urgent), urgent, urgencyReason, dueInDays };
+  const placement = placementOf(task.important, urgent);
+  const idleDays = Math.max(0, daysBetween(localDateString(new Date(lastAttention(task))), today));
+  return { placement, urgent, urgencyReason, dueInDays, idleDays, stale: isStale(task, placement, idleDays, today, settings) };
+}
+
+// ---- Staleness (5.1) -----------------------------------------------------------
+
+/**
+ * When you last paid a task attention. `reviewedAt` when there is one.
+ * Tasks saved before Phase 5 don't have it, so: the last edit for tasks
+ * only you change, but the creation date for mirrored tasks, whose
+ * `updatedAt` moves every time the source says something new.
+ */
+export function lastAttention(task: Task): string {
+  return task.reviewedAt ?? (task.mirror ? task.createdAt : task.updatedAt);
+}
+
+/**
+ * The rule in one sentence: a task is stale when you haven't touched it for
+ * 30 days (7 in "Do now") and it isn't waiting on a date still to come.
+ *
+ * A future due date or planned day means it's parked on purpose, so it
+ * isn't flagged however long ago you set that up. An overdue task can be
+ * stale as well as overdue — they're different questions.
+ */
+export function isStale(task: Task, placement: Placement, idleDays: number, today: string, settings: PrioritySettings): boolean {
+  if (task.status !== 'open') return false;
+  if (task.dueDate && task.dueDate >= today) return false;
+  if (task.scheduledDate && task.scheduledDate >= today) return false;
+  const limit = placement === 'do' ? settings.doNowStaleAfterDays : settings.staleAfterDays;
+  return idleDays >= limit;
 }
 
 /** A task is only placed once both questions have an answer. */

@@ -448,3 +448,61 @@ kbd {
   .day-grid { grid-template-columns: 1fr; }
   .fit-in { position: static; max-height: none; }
 }
+
+/* ---- Keeping it honest (Phase 5) ---------------------------------------- */
+
+/* 5.3: problems that mean the list can't be trusted. Meant to be noticed. */
+.alerts { display: grid; gap: 8px; margin-top: 16px; }
+.alerts[hidden] { display: none; }
+.alert {
+  display: flex; align-items: center; gap: 12px; justify-content: space-between;
+  padding: 10px 14px; border-radius: 8px;
+  background: var(--overload-bg); border: 1px solid var(--danger); color: var(--text); font-size: 14px;
+}
+.alert button { flex: none; font-size: 13px; }
+.filters button.is-unhealthy { border-color: var(--danger); color: var(--danger); }
+.source-chip[data-health="stale"] { color: var(--danger); }
+[data-health="stale"] .dot { background: var(--danger); }
+
+/* 5.1 */
+.idle { white-space: nowrap; color: var(--q-delegate); font-weight: 600; }
+.idle::before { content: "◌ "; }
+
+/* 5.2: the review button and the review itself. */
+.review-button { align-self: center; font-size: 13px; padding: 5px 12px; border-radius: 8px; color: var(--muted); }
+.review-button .n { margin-left: 4px; font-variant-numeric: tabular-nums; }
+.review-button.has-items { color: var(--text); border-color: var(--q-delegate); }
+.review-button.has-items .n { color: var(--q-delegate); font-weight: 700; }
+.review-button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+.review-button[aria-pressed="true"] .n { color: inherit; }
+
+#review { max-width: 680px; margin: 8px auto 0; }
+.review-header { display: flex; align-items: baseline; gap: 12px; }
+.review-header h2 { margin: 0; font-size: 17px; }
+.review-progress { flex: 1; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.review-bar { height: 4px; background: var(--line); border-radius: 2px; margin: 10px 0 16px; overflow: hidden; }
+.review-bar span { display: block; height: 100%; background: var(--focus); transition: width 0.2s; }
+
+.review-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+.review-card[data-reason="overdue"], .review-card[data-reason="overload"] { border-top: 3px solid var(--danger); }
+.review-card[data-reason="stale"], .review-card[data-reason="missed"] { border-top: 3px solid var(--q-delegate); }
+.review-card[data-reason="untriaged"], .review-card[data-reason="unnamed"] { border-top: 3px solid var(--q-schedule); }
+.review-reason { margin: 0; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.review-ask { margin: 4px 0 12px; color: var(--text); }
+.review-card .list { border-top: 1px solid var(--line); }
+.review-card .task .title { font-size: 17px; font-weight: 500; }
+.review-card .task .actions { opacity: 1; }
+.review-name { display: flex; gap: 8px; margin-top: 12px; }
+.review-name input {
+  flex: 1; min-width: 0; font: inherit; color: inherit; padding: 8px 10px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+}
+.review-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.review-actions button { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.review-actions button kbd { font-size: 10px; }
+.review-actions .primary, .review-name .primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+.review-actions .primary kbd { background: transparent; color: inherit; border-color: currentColor; }
+.review-actions .danger { color: var(--danger); }
+.review-done .review-reason { color: var(--text); }
+.review-card .task .actions { display: none; } /* the card's own buttons cover these */
+.capture[hidden], .filters[hidden], .sources[hidden] { display: none; }

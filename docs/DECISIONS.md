@@ -464,3 +464,129 @@ framework yet.
 **Rejected.** A full week grid like a calendar app's: much more drawing
 code, and cramped at this page width. Ahead's day list answers 4.3
 without it. Writing events into Lunatask or the calendar: read-only (D8).
+
+---
+
+## D14 — Stale tasks: idle for 30 days, or 7 in "Do now", with nothing ahead
+
+_14 Oct 2026 · backlog 5.1_
+
+**The rule, in one sentence:** a task is flagged *idle* when you haven't
+touched it for 30 days (7 in "Do now") and it isn't waiting on a date
+still to come.
+
+**What counts as touching it.** Creating it, editing anything, placing it
+on the matrix, scheduling it, reopening it, or saying "still relevant" in
+the review. Each sets `reviewedAt`. **Syncs never do.** Lunatask updating
+a task's status every 15 minutes says nothing about whether *you've*
+thought about it.
+
+**Why 7 days in "Do now".** "Do now" claims a task is urgent. A week later,
+untouched, that claim has usually stopped being true: the task isn't
+urgent, or isn't going to happen. Elsewhere a month is a fair test of
+"am I ever going to do this?" Both numbers can be changed
+(`STALE_AFTER_DAYS`, `DO_NOW_STALE_AFTER_DAYS`).
+
+**Why a future date exempts it.** A due date next month or a planned day
+next week means it's parked on purpose. Flagging it would be noise, and
+noise is what makes people stop reading flags. Once the date passes, it's
+overdue or "planned for a day that's gone", both of which the review asks
+about anyway.
+
+**Worked out, not stored** (as in D5). Nothing rewrites `tasks.json`
+when a task crosses the line; the flag is calculated each time from
+`reviewedAt` and today. For tasks saved before Phase 5, which have no
+`reviewedAt`: the last edit is used for your own tasks, and the creation
+date for mirrored ones, whose `updatedAt` moves with every sync.
+
+**Flagged, not acted on.** Nothing is dropped automatically. Idle tasks
+show *◌ Idle 34 days* and go into the review. What to do with them is
+your call.
+
+---
+
+## D15 — The review: one card at a time, in a fixed order
+
+_14 Oct 2026 · backlog 5.2_
+
+**Decision.** A **Review** button (or `r`) shows how many tasks need a
+decision and opens them one card at a time. `src/review.ts` builds the
+queue; each task appears once, under the first reason that applies:
+
+1. **Not placed yet:** place it, or drop it.
+2. **Needs a name** (Lunatask): type the name on the card.
+3. **Overdue:** due tomorrow / in a week / no date, done, or drop.
+4. **Planned for a day that's gone:** plan for today / tomorrow / unplan.
+5. **Idle** (D14): still relevant, move it, done, or drop.
+6. **"Do now" over its limit** (D6): all of "Do now", so you can choose
+   what to move out.
+
+**Why that order.** It runs from the cheapest decision to the most
+considered. Placing an unplaced task takes a second, and later decisions
+are easier once everything is placed. It also clears the reasons the
+other views can't show properly: an unnamed task can't be judged, and an
+unplaced one isn't on the matrix.
+
+**Why one card at a time.** 5.2 asks for "a few minutes rather than an
+afternoon". A list of 20 problems invites scrolling and putting it off.
+One card with four or five obvious buttons asks for one decision. Every
+button has a key (1–4, `k`, `x`, `d`, `e`, `→`) and the usual Undo.
+
+**The queue is fixed when the review starts.** Placing a task doesn't
+reshuffle what comes next, and cards for tasks closed elsewhere
+meanwhile are skipped. Skipped cards come back next time; nothing records
+that you've "seen" a task without deciding. Skipping isn't a decision.
+
+**Not built.** A reminder to review, or a record of when you last did.
+The count on the button is the reminder: it's amber whenever anything
+needs a decision. If that turns out not to be enough, a "last reviewed"
+date is a small addition.
+
+---
+
+## D16 — Sync failures: a banner, not a footnote
+
+_14 Oct 2026 · backlog 5.3_
+
+**The problem.** Phase 3 showed each sync's result in the Sources line,
+but a failure there was a small red dot. The list still *looked* complete,
+which is exactly the trust problem 5.3 is about.
+
+**Decision.** Each source now has a `health`, worked out in
+`src/sync-runner.ts` (`healthOf`):
+
+| Health | When | Shown |
+|---|---|---|
+| off | not set up | grey dot |
+| pending | first sync not finished | grey dot |
+| ok | last sync worked | green dot |
+| warn | worked, with something worth knowing | amber dot, Sources opens |
+| **error** | last sync failed | **red banner**, ⚠ on its filter chip |
+| **stale** | no sync has worked for over two intervals (+5 min) | **red banner**, ⚠ on its filter chip |
+
+**Why "stale" as well as "error".** A failure can only be reported by a
+sync that finishes. A sync that hangs, or a timer that stops, produces no
+error at all, so the app also checks how long it's been since anything
+worked. With syncing every 15 minutes that's 35 minutes. With
+`SYNC_EVERY_MINUTES=0` (sync only when asked) there's no schedule to miss,
+so nothing is stale.
+
+**The banner says three things:** which source, since when, and what went
+wrong, in words (e.g. *"Lunatask hasn't synced since 10:42 (3 tries in a
+row): Lunatask rejected the access token. What's shown from it may be out
+of date."*). It has a Sync now button and goes away by itself once a sync
+works.
+
+**A calendar where one feed fails now counts as failed,** not as a
+warning. The feeds that worked are still updated, and the failed one
+keeps its last good copy on screen, but you're told.
+
+**The page can lose the server too.** If the app stops (closed terminal,
+restart, sleep), the open page would otherwise go on looking current. Now
+a failed refresh shows *"Can't reach the app since 12:10"*, and the page
+checks every 10 seconds until it's back.
+
+**Kept in memory, on purpose.** Health is about this run of the app, so a
+restart starts clean and the first sync re-establishes it. Writing it to
+`tasks.json` would mean rewriting the sync-folder file just to say "still
+fine" (D2).

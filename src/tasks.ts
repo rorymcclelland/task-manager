@@ -22,6 +22,7 @@ import {
   type PrioritySettings,
 } from './priority.ts';
 import type { TaskStore } from './store/task-store.ts';
+import { buildReviewQueue, type ReviewQueue } from './review.ts';
 import { planSync, type SourceItem, type SyncOptions, type SyncReport } from './sync.ts';
 
 /** Thrown for bad input; the HTTP layer turns it into a 400 response. */
@@ -128,6 +129,11 @@ export class TaskService {
     });
   }
 
+  /** 5.2: what needs a decision, in the order it's worth deciding. */
+  async review(): Promise<ReviewQueue> {
+    return buildReviewQueue(await this.listOpen(), this.today(), this.settings);
+  }
+
   async get(id: string): Promise<Task> {
     const task = await this.store.get(id);
     if (!task) throw new NotFoundError(`No task with id ${id}`);
@@ -162,6 +168,7 @@ export class TaskService {
       createdAt: timestamp,
       updatedAt: timestamp,
       closedAt: null,
+      reviewedAt: timestamp,
     };
     requireSlotHasDay(task);
     await this.store.save(task);
@@ -197,8 +204,34 @@ export class TaskService {
     requireSlotHasDay(updated);
 
     updated.updatedAt = this.now().toISOString();
+    // Any edit you make counts as paying it attention (5.1).
+    updated.reviewedAt = updated.updatedAt;
     await this.store.save(updated);
     return updated;
+  }
+
+  /**
+   * 5.2: "Still relevant" — you've looked at it and it stays as it is.
+   * Resets the idle clock without changing anything else.
+   */
+  async keep(id: string): Promise<PrioritisedTask> {
+    const task = await this.get(id);
+    if (task.status !== 'open') throw new ValidationError(`Task is already ${task.status}`);
+    const timestamp = this.now().toISOString();
+    const kept: Task = { ...task, reviewedAt: timestamp, updatedAt: timestamp };
+    await this.store.save(kept);
+    return { ...kept, priority: prioritise(kept, this.today(), this.settings) };
+  }
+
+  /** 5.2: undo for "Still relevant" — put the old attention date back. */
+  async setReviewedAt(id: string, reviewedAt: string | null): Promise<Task> {
+    const task = await this.get(id);
+    if (reviewedAt !== null && Number.isNaN(Date.parse(reviewedAt))) throw new ValidationError('reviewedAt must be a timestamp');
+    const next: Task = { ...task, updatedAt: this.now().toISOString() };
+    if (reviewedAt === null) delete next.reviewedAt;
+    else next.reviewedAt = reviewedAt;
+    await this.store.save(next);
+    return next;
   }
 
   // ---- Bringing tasks in from elsewhere (Phase 3) ---------------------------
@@ -295,7 +328,7 @@ export class TaskService {
       }
     }
 
-    changed.push({ ...task, status: 'open', mergedInto: null, closedAt: null, updatedAt: timestamp });
+    changed.push({ ...task, status: 'open', mergedInto: null, closedAt: null, updatedAt: timestamp, reviewedAt: timestamp });
     await this.store.saveMany(changed);
     return changed[changed.length - 1];
   }

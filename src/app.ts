@@ -21,6 +21,9 @@
 //   GET   /api/sync                        each source's set-up and last sync
 //   POST  /api/sync                        sync every source now
 //   GET   /api/agenda?from=YYYY-MM-DD&days=N   tasks and calendar events by day (Phase 4)
+//   GET   /api/review                      what needs a decision, in order (5.2)
+//   POST  /api/tasks/:id/keep              "still relevant": resets its idle clock (5.1)
+//   POST  /api/tasks/:id/reviewed-at {reviewedAt}   puts it back (undo for keep)
 //
 // Scheduling a task (4.2) is a PATCH: {scheduledDate, slot: {start, minutes} | null}.
 
@@ -110,6 +113,8 @@ async function handleApi(
 
   if (resource === 'matrix' && method === 'GET') return sendJson(response, 200, await service.matrix());
 
+  if (resource === 'review' && method === 'GET') return sendJson(response, 200, await service.review());
+
   if (resource === 'duplicates' && method === 'GET') {
     const pairs = await service.duplicates();
     return sendJson(response, 200, pairs.map((p) => ({ a: p.a, b: p.b, score: p.score })));
@@ -151,6 +156,12 @@ async function handleApi(
         return sendJson(response, 200, await service.drop(id));
       case 'reopen':
         return sendJson(response, 200, await service.reopen(id));
+      case 'keep':
+        return sendJson(response, 200, await service.keep(id));
+      case 'reviewed-at': {
+        const { reviewedAt } = await readJson(request);
+        return sendJson(response, 200, await service.setReviewedAt(id, reviewedAt ?? null));
+      }
       case 'place': {
         const { quadrant } = await readJson(request);
         return sendJson(response, 200, await service.place(id, quadrant));

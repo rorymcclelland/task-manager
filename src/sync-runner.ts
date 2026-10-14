@@ -1,6 +1,10 @@
 // Runs the source connectors and remembers how each one went, so the page
-// can show "Lunatask: synced 10:42 · 2 new" or a plain error (and so a sync
-// that has quietly stopped working is visible — a first step towards 5.3).
+// can show "Lunatask: synced 10:42 · 2 new" or a plain error.
+//
+// 5.3 — a sync that has stopped working must never look like one with
+// nothing new. Each source's `health` says which it is (see `healthOf`), and
+// the page puts anything other than "ok" or "warn" in a banner at the top.
+// See docs/DECISIONS.md, D16.
 //
 // Sources run one after another, never two syncs at once. A sync runs when
 // the app starts, every SYNC_EVERY_MINUTES, and when you press "Sync now".
@@ -24,6 +28,17 @@ export interface SyncConfig {
 
 export type ConnectorId = 'lunatask' | 'local' | 'inbox' | 'calendar';
 
+/**
+ * - off:     not set up
+ * - pending: set up, first sync not finished yet
+ * - ok:      last sync worked
+ * - warn:    last sync worked, with something worth knowing (an unreadable file…)
+ * - error:   last sync failed
+ * - stale:   no sync has worked for over two sync intervals — it may be
+ *            stuck, or the app's timer stopped; either way, don't trust it
+ */
+export type Health = 'off' | 'pending' | 'ok' | 'warn' | 'error' | 'stale';
+
 export interface ConnectorStatus {
   id: ConnectorId;
   label: string;
@@ -31,6 +46,13 @@ export interface ConnectorStatus {
   configured: boolean;
   /** What to do to set it up, or where it looks once it is. */
   setup: string;
+  health: Health;
+  /** One plain sentence for the banner when health is error or stale. */
+  problem: string | null;
+  /** When a sync last worked (since the app started). */
+  lastSuccessAt: string | null;
+  /** Failed syncs in a row. */
+  failures: number;
   lastRun: {
     at: string;
     ok: boolean;
@@ -53,6 +75,11 @@ interface Connector {
 export class SyncRunner {
   private readonly connectors: Connector[];
   private readonly status = new Map<ConnectorId, ConnectorStatus['lastRun']>();
+  private readonly lastSuccess = new Map<ConnectorId, string>();
+  private readonly failures = new Map<ConnectorId, number>();
+  /** Set by start(): how often syncs should happen, and since when. */
+  private intervalMinutes = 0;
+  private startedAt: string | null = null;
   private running: Promise<ConnectorStatus[]> | null = null;
   private timer: NodeJS.Timeout | null = null;
   private readonly now: () => Date;
@@ -128,13 +155,22 @@ export class SyncRunner {
 
   /** Every connector, with how its last run went. */
   statuses(): ConnectorStatus[] {
-    return this.connectors.map((c) => ({
-      id: c.id,
-      label: c.label,
-      configured: c.configured,
-      setup: c.setup,
-      lastRun: this.status.get(c.id) ?? null,
-    }));
+    return this.connectors.map((c) => {
+      const lastRun = this.status.get(c.id) ?? null;
+      const lastSuccessAt = this.lastSuccess.get(c.id) ?? null;
+      const failures = this.failures.get(c.id) ?? 0;
+      const { health, problem } = healthOf({
+        label: c.label,
+        configured: c.configured,
+        lastRun,
+        lastSuccessAt,
+        failures,
+        startedAt: this.startedAt,
+        intervalMinutes: this.intervalMinutes,
+        now: this.now(),
+      });
+      return { id: c.id, label: c.label, configured: c.configured, setup: c.setup, health, problem, lastSuccessAt, failures, lastRun };
+    });
   }
 
   /** Run every configured connector. If a sync is already running, wait for
@@ -150,6 +186,8 @@ export class SyncRunner {
 
   /** Sync now, then every `minutes`. 0 = only when asked. */
   start(minutes: number): void {
+    this.intervalMinutes = minutes;
+    this.startedAt = this.now().toISOString();
     void this.syncAll();
     if (minutes > 0) {
       this.timer = setInterval(() => void this.syncAll(), minutes * 60_000);
@@ -168,14 +206,73 @@ export class SyncRunner {
       try {
         const { summary, warnings } = await connector.run();
         this.status.set(connector.id, { at, ok: true, summary, warnings, error: null });
+        this.lastSuccess.set(connector.id, at);
+        this.failures.set(connector.id, 0);
       } catch (error) {
         // One source failing never stops the others.
         console.error(`Sync from ${connector.label} failed:`, (error as Error).message);
         this.status.set(connector.id, { at, ok: false, summary: '', warnings: [], error: (error as Error).message });
+        this.failures.set(connector.id, (this.failures.get(connector.id) ?? 0) + 1);
       }
     }
     return this.statuses();
   }
+}
+
+/** A sync interval's grace: two intervals plus five minutes. */
+function graceMs(intervalMinutes: number): number {
+  return (2 * intervalMinutes + 5) * 60_000;
+}
+
+/**
+ * How healthy one source is, and the sentence to show if it isn't. Pure, so
+ * the rules can be tested with any clock.
+ *
+ * "Stale" catches what a failure can't: a sync that never finishes, or a
+ * timer that stopped. It needs a schedule to measure against, so with
+ * SYNC_EVERY_MINUTES=0 (sync only when asked) nothing is ever stale.
+ */
+export function healthOf(input: {
+  label: string;
+  configured: boolean;
+  lastRun: ConnectorStatus['lastRun'];
+  lastSuccessAt: string | null;
+  failures: number;
+  startedAt: string | null;
+  intervalMinutes: number;
+  now: Date;
+}): { health: Health; problem: string | null } {
+  const { label, lastRun, lastSuccessAt, failures, startedAt, intervalMinutes, now } = input;
+  if (!input.configured) return { health: 'off', problem: null };
+
+  const since = lastSuccessAt ? `since ${clock(lastSuccessAt)}` : 'since the app started';
+  if (lastRun && !lastRun.ok) {
+    const tries = failures > 1 ? ` (${failures} tries in a row)` : '';
+    return {
+      health: 'error',
+      problem: `${label} hasn't synced ${since}${tries}: ${lastRun.error} What's shown from it may be out of date.`,
+    };
+  }
+
+  const reference = lastSuccessAt ?? startedAt;
+  if (intervalMinutes > 0 && reference && now.getTime() - Date.parse(reference) > graceMs(intervalMinutes)) {
+    return {
+      health: 'stale',
+      problem: `${label} hasn't synced ${since}, though it should every ${intervalMinutes} minutes. The sync may be stuck — try Sync now, or restart the app.`,
+    };
+  }
+
+  if (!lastRun) return { health: 'pending', problem: null };
+  return { health: lastRun.warnings.length ? 'warn' : 'ok', problem: null };
+}
+
+/** "10:42", or "Tue 10:42" if it wasn't today. On this computer's clock. */
+function clock(iso: string): string {
+  const date = new Date(iso);
+  const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return time;
+  return `${date.toLocaleDateString('en-GB', { weekday: 'short' })} ${time}`;
 }
 
 function summarise(created: number, updated: number, closed: number, openThere: number): string {

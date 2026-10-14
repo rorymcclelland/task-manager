@@ -30,6 +30,10 @@
 //     shown as free, an all-day offsite and a monthly review; plus tasks
 //     slotted into today and tomorrow, one planned for today with no time,
 //     and one planned for a day already gone.
+//   - Phase 5: idle tasks — one sitting in "Do now" for 10 days (limit 7),
+//     one untouched for 40 days — next to old tasks that aren't idle because
+//     they're planned ahead. And a second calendar that doesn't exist, so the
+//     red "hasn't synced" banner shows (5.3); the first calendar still works.
 
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
@@ -130,8 +134,8 @@ function task(s: Sample): Task {
 // Do now — 6 tasks, one over the limit. Three are here only because of
 // their due date (overdue, due today, due in 2 days).
 const doNow = [
-  task({ title: 'Confirm whether Lunatask has a public API', source: 'claude', important: true, urgent: true, createdDaysAgo: 1,
-    notes: 'Decides the Phase 3 import route: API, export file, or manual entry.' }),
+  task({ title: 'Confirm whether Lunatask has a public API', source: 'claude', important: true, urgent: true, createdDaysAgo: 10,
+    notes: 'In Do now for 10 days without being touched — past the 7-day limit there, so it shows as idle.' }),
   task({ title: 'Pay electricity bill', source: 'lunatask', important: true, urgent: false, due: -2, createdDaysAgo: 12, lunatask: 'next · must',
     notes: 'Marked not urgent, but it is now overdue, so it shows in Do now with ⏱.' }),
   task({ title: 'Submit expenses for September', source: 'gemini', important: true, due: 0, scheduled: 0, createdDaysAgo: 9 }),
@@ -274,7 +278,9 @@ if (!process.argv.includes('--no-start')) {
   process.env.TASKS_FILE = sampleFile;
   process.env.LOCAL_FOLDERS = sampleNotes;
   process.env.INBOX_FOLDER = sampleInbox;
-  process.env.CALENDAR_URLS = sampleCalendar;
+  // The second one doesn't exist on purpose: it shows what a failing
+  // source looks like (5.3). Delete it from this line to make the banner go.
+  process.env.CALENDAR_URLS = `${sampleCalendar};${join(import.meta.dirname, '..', 'data', 'missing-calendar.ics')}`;
   process.env.LUNATASK_TOKEN = '';
   await import('../src/server.ts');
 }

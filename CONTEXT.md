@@ -47,7 +47,7 @@ Same working pattern as the Bolt prototypes:
 
 ## Current status
 
-**Phases 0–4 are built** (14 Oct 2026): a local web app with one list
+**Phases 0–5 are built** (14 Oct 2026): a local web app with one list
 across all sources, quick capture, complete/drop with undo, duplicate merging,
 and an Eisenhower matrix as the default view. Tasks move between quadrants by
 drag or keyboard, due dates raise urgency automatically, and an overfull
@@ -56,7 +56,9 @@ API, Claude and Gemini tasks arrive by pasting a block or dropping a file in
 an inbox folder, and checkboxes/TODOs in your notes folders are mirrored.
 Phase 4 adds time: your calendar (read from its .ics address) beside the
 list in a Day view, tasks slotted into it, the free time left, and an
-Ahead view of the next 14 days.
+Ahead view of the next 14 days. Phase 5 keeps it believable: idle tasks
+are flagged, a one-card-at-a-time review clears what needs deciding, and
+a failed or stuck sync shows as a red banner.
 See `README.md` to run it.
 
 ## Sync direction per source (backlog 3.5)
