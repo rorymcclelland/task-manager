@@ -3,9 +3,9 @@
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../src/app.ts';
@@ -21,10 +21,22 @@ after(() => server.close());
 async function call(method: string, path: string, body?: unknown) {
   const response = await fetch(base + path, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
+    headers: method === 'GET' ? {} : { 'Content-Type': 'application/json' },
+    body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
   });
   return { status: response.status, body: await response.json() };
+}
+
+/** A raw request, so tests can set Host and Origin like a browser would. */
+function raw(method: string, path: string, headers: Record<string, string>, body = ''): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = request(base + path, { method, headers }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode ?? 0));
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
 }
 
 test('capture, list, complete and reopen through the API', async () => {
@@ -148,4 +160,76 @@ test('5.2 — /api/review lists what needs a decision; keep resets the idle cloc
   assert.equal(kept.body.priority.idleDays, 0);
   const back = await call('POST', `/api/tasks/${created.id}/reviewed-at`, { reviewedAt: 'not a date' });
   assert.equal(back.status, 400);
+});
+
+// ---- Phase 6: hardening ---------------------------------------------------------
+
+test('Q1 — another website cannot change tasks; this app and local scripts can', async () => {
+  const id = (await call('POST', '/api/tasks', { title: 'Guarded' })).body.id;
+  const host = new URL(base).host;
+  const json = { 'Content-Type': 'application/json' };
+  // What a cross-site page can send without asking: text/plain, its own Origin.
+  assert.equal(await raw('POST', `/api/tasks/${id}/complete`, { 'Content-Type': 'text/plain', Origin: 'https://evil.example' }), 403);
+  assert.equal(await raw('POST', '/api/capture', { 'Content-Type': 'text/plain' }, '{"text":"planted"}'), 403);
+  // Even JSON is refused when another origin — including another local port — sends it.
+  assert.equal(await raw('POST', `/api/tasks/${id}/drop`, { ...json, Origin: 'http://127.0.0.1:1' }), 403);
+  assert.equal(await raw('POST', `/api/tasks/${id}/drop`, { ...json, Origin: 'null' }), 403);
+  // DNS rebinding: a request addressed to another name is refused, reads included.
+  assert.equal(await raw('GET', '/api/tasks', { Host: 'evil.example' }), 403);
+  // The app's own page (same origin) and scripts with no Origin still work.
+  assert.equal(await raw('GET', '/api/tasks', {}), 200);
+  assert.equal(await raw('POST', `/api/tasks/${id}/complete`, { ...json, Origin: `http://${host}` }), 200);
+  assert.equal(await raw('POST', `/api/tasks/${id}/reopen`, json), 200);
+  assert.equal((await call('GET', `/api/tasks/${id}`)).body.status, 'open');
+});
+
+test('Q9 — fields the API stores are type-checked', async () => {
+  assert.equal((await call('POST', '/api/tasks', { title: 'x', externalId: { $ne: 1 } })).status, 400);
+  assert.equal((await call('POST', '/api/tasks', { title: 'x', notes: { a: 1 } })).status, 400);
+  const id = (await call('POST', '/api/tasks', { title: 'typed' })).body.id;
+  assert.equal((await call('POST', `/api/tasks/${id}/reviewed-at`, { reviewedAt: 12345 })).status, 400);
+  assert.equal((await call('PATCH', `/api/tasks/${id}`, { notes: 42 })).status, 400);
+  const merge = await call('POST', `/api/tasks/${id}/merge`, {});
+  assert.equal(merge.status, 400);
+  assert.match(merge.body.error, /intoId/);
+});
+
+test('Q2 — impossible dates are refused', async () => {
+  assert.equal((await call('POST', '/api/tasks', { title: 'x', dueDate: '2026-02-30' })).status, 400);
+  assert.equal((await call('POST', '/api/tasks', { title: 'x', dueDate: '2026-13-45' })).status, 400);
+  assert.equal((await call('GET', '/api/agenda?from=2026-02-30')).status, 400);
+  const captured = (await call('POST', '/api/capture', { text: 'Pay rent due:2026-02-31' })).body;
+  assert.equal(captured.dueDate, null);
+  assert.equal(captured.title, 'Pay rent due:2026-02-31');
+});
+
+test('Q3 — an unreadable task file is a 503 that says what\'s wrong', async () => {
+  const dir2 = await mkdtemp(join(tmpdir(), 'task-api-bad-'));
+  const file = join(dir2, 'tasks.json');
+  await writeFile(file, '{"version":1,"tasks":[');
+  const bad = createServer(createApp(new TaskService(new JsonFileStore(file))));
+  await new Promise<void>((resolve) => bad.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${(bad.address() as AddressInfo).port}/api/tasks`);
+    const body = await response.json();
+    assert.equal(response.status, 503);
+    assert.equal(body.kind, 'task-file');
+    assert.match(body.error, /isn't valid JSON.*Nothing has been changed/);
+  } finally {
+    bad.close();
+  }
+});
+
+test('Q5 — /api/health lists set-aside entries', async () => {
+  assert.deepEqual((await call('GET', '/api/health')).body, { taskFile: [] });
+});
+
+test('Q8 — /api/duplicates?limit=N returns the top N and the total', async () => {
+  for (const title of ['Order printer paper', 'Order the printer paper', 'Order printer paper now']) await call('POST', '/api/tasks', { title });
+  const all = (await call('GET', '/api/duplicates')).body;
+  const top = (await call('GET', '/api/duplicates?limit=1')).body;
+  assert.equal(top.total, all.length);
+  assert.equal(top.pairs.length, 1);
+  assert.deepEqual(top.pairs[0].score, all[0].score);
+  assert.equal((await call('GET', '/api/duplicates?limit=0')).status, 400);
 });

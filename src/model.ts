@@ -124,8 +124,14 @@ export function isStatus(value: unknown): value is Status {
 }
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+/** A real calendar day as YYYY-MM-DD. Q2: the pattern alone let 2026-02-30
+ *  and 2026-13-45 through, so the date is also checked to exist — it must
+ *  survive a round trip through the calendar unchanged. */
 export function isDateString(value: unknown): value is string {
-  return typeof value === 'string' && DATE_PATTERN.test(value);
+  if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return false;
+  const [y, m, d] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
 }
 
 /** "HH:MM", 24-hour, 00:00–23:59. */

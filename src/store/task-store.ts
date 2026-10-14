@@ -17,4 +17,7 @@ export interface TaskStore {
   /** Insert or replace several tasks as one write — used by merge, which
    *  changes two tasks and must not leave the file half-updated. */
   saveMany(tasks: Task[]): Promise<void>;
+  /** Optional (Q5): things about the stored data worth showing, such as
+   *  entries that couldn't be used. Empty when all is well. */
+  problems?(): string[];
 }

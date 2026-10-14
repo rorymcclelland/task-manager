@@ -33,6 +33,9 @@ this page is the map.
                                 └───────────────────────────────────────────┘
 ```
 
+Before any of it, `refuseForeign` in `app.ts` turns away requests that
+didn't come from this page or this computer (D17).
+
 Three layers, each only talking to the one below:
 
 1. **The page** (`public/`) draws what the server gives it and sends
@@ -63,9 +66,9 @@ one save, one redraw.
 
 ## How the page stays current
 
-The page re-fetches its data (eight requests in parallel: open tasks,
-closed tasks, duplicates, matrix, sync status, the day's agenda, the
-14-day agenda, the review queue):
+The page re-fetches its data (nine requests in parallel: open tasks,
+closed tasks, the top ten duplicates, matrix, sync status, the day's
+agenda, the 14-day agenda, the review queue, and task-file health):
 
 - after every action you take,
 - when you switch back to the tab,
@@ -91,6 +94,10 @@ anything rewriting the file. Settings: `URGENT_WITHIN_DAYS`,
 `sync-runner.ts` runs each configured source one after another — on
 start, every `SYNC_EVERY_MINUTES` (default 15), and on "Sync now". Never
 two syncs at once; one source failing never stops the others.
+
+Inbox and notes files are read by `sources/text-file.ts`, which handles
+UTF-8 (with or without a byte-order mark) and UTF-16 (what Windows
+PowerShell 5 writes), and refuses anything that still isn't text.
 
 | Source | File | What it returns | How it lands |
 |---|---|---|---|
@@ -160,4 +167,8 @@ call with an ordinary Undo.
   Node's type definitions for `npm run typecheck`.
 - **Single user, single machine at a time.** Two copies of the app
   against one synced `tasks.json` would be "last write wins".
-- **Local only.** The server binds to 127.0.0.1.
+- **Local only.** The server binds to 127.0.0.1, answers only requests
+  addressed to localhost, and accepts changes only as JSON from its own
+  page or a local script (D17).
+- **The task file is never written while it can't be read,** and
+  entries it can't use are kept, not deleted (D18).

@@ -126,3 +126,10 @@ test('an endless daily rule from long ago still answers quickly', () => {
   assert.equal(list(text, '2026-10-14', '2026-10-27').length, 14);
   assert.ok(performance.now() - started < 1000);
 });
+
+test('Q12 — an event at a time the clocks skip keeps its length', () => {
+  // 28 Mar 2027: Irish clocks jump from 01:00 to 02:00, so 01:30 doesn't exist.
+  const text = cal(['UID:1', 'SUMMARY:Spring gap', 'DTSTART;TZID=Europe/Dublin:20270328T013000', 'DTEND;TZID=Europe/Dublin:20270328T023000']);
+  const [o] = occurrences(parseCalendar(text), '2027-03-28', '2027-03-28', 'Europe/Dublin').occurrences;
+  assert.equal(o.endMs! - o.startMs!, 60 * 60 * 1000);
+});

@@ -147,8 +147,11 @@ while to appear.
 | Red banner: *…didn't return a calendar* | The link is to the calendar's web page, not the iCal address | Use the "iCal format" / "ICS" link |
 | Red banner: *…hasn't synced since…, though it should every 15 minutes* | A sync is stuck, or the app's timer stopped | Click Sync now; if it stays, restart the app |
 | Amber dot on a source | It synced, but something's worth knowing (e.g. an unreadable notes file) | Open *Sources* to read it |
-| *Couldn't reach the task server: Something went wrong* when the server is running | `tasks.json` can't be read (damaged, or saved with a byte-order mark) | Look in the console for the reason; restore a copy or fix the JSON. The app never overwrites a file it can't read. (Clearer message: backlog Q3) |
+| Red banner: *Your tasks can't be loaded. The task file can't be read: …* | `tasks.json` is damaged (half-synced, or a hand edit broke the JSON) or from a newer app version | The banner says what's wrong and where the file is. Restore a copy or fix the JSON; the banner clears by itself. Nothing is written to the file until it reads again (D18) |
+| Amber banner: *Entry 4 in tasks.json isn't a task the app can use* | A hand edit left an entry with no `id` or `title` | Fix or remove that entry by hand. It's kept in the file, untouched, until you do |
+| `403` from a script calling the API | The request isn't sent as JSON, or names another site as its origin | Add `Content-Type: application/json` to every POST/PATCH (D17) |
 | Lunatask tasks all say *Unnamed Lunatask task* | Expected — Lunatask encrypts names | Name them once, via the review |
 | A ticked notes checkbox didn't close the task | The next sync hasn't run, or the file moved | Click Sync now. Moving or renaming a file doesn't close its tasks, by design |
-| Odd characters in tasks from an inbox file | The file was saved as UTF-16 (e.g. PowerShell 5's `>`) | Save as UTF-8, or use `Set-Content -Encoding utf8`. (Fix: backlog Q4) |
+| Sources warning: *…doesn't look like a text file* | An inbox or notes file is UTF-16 without a byte-order mark, or not text | Save it as UTF-8. (UTF-8 and UTF-16 with a byte-order mark — what Notepad and PowerShell 5 write — are both read fine.) The inbox file stays where it is |
+| Sources warning: *line 4 had shortcuts but no task title, so it was skipped* | A stray `- !1` (or `- due:…`) part-way down an inbox file | Nothing to do unless that line was meant to be a task |
 | Times in the calendar are an hour out | The calendar uses a time zone this app doesn't recognise | *Sources* names the zone; tell Claude so it can be added to `src/calendar/zones.ts` |

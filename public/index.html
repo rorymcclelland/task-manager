@@ -41,13 +41,18 @@
     <nav class="filters" id="filters" aria-label="Filter by source"></nav>
 
     <!-- Phase 3: each source's last sync, and a button to sync now. -->
-    <details class="sources" id="sources">
-      <summary>
-        <span class="sources-label">Sources</span>
-        <span class="sources-chips" id="sources-chips"></span>
-      </summary>
-      <div class="sources-body" id="sources-body"></div>
-    </details>
+    <!-- Q10: Sync now sits beside the panel's header, not inside it, so
+         screen readers see two separate controls. -->
+    <div class="sources-row" id="sources-row">
+      <details class="sources" id="sources">
+        <summary>
+          <span class="sources-label">Sources</span>
+          <span class="sources-chips" id="sources-chips"></span>
+        </summary>
+        <div class="sources-body" id="sources-body"></div>
+      </details>
+      <span class="sync-slot" id="sync-slot"></span>
+    </div>
 
     <!-- 1.5: suggested duplicates appear here when there are any. -->
     <section class="duplicates" id="duplicates" hidden></section>

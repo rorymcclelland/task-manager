@@ -55,11 +55,17 @@ Example: `Send Sarah the budget #claude !1 due:2026-10-17 https://claude.ai/chat
 → a Claude task in Do now, due Friday, whose orange **Claude ↗** label
 opens the conversation.
 
-**Pasting several lines** adds each as a task. A first line with only a
-link or a `#source` (or `!1`, `due:`, `on:`) applies to every line under
-it. List markers (`-`, `*`, `1.`) and empty checkboxes are stripped;
-ticked `- [x]` lines are skipped. Pasting the same block twice adds
-nothing the second time.
+**Pasting several lines** adds each as a task. Lines at the top with only
+a link or a `#source` (or `!1`, `due:`, `on:`) apply to every line under
+them. Further down, a line with just a new link or `#source` starts a new
+section, as when two conversations' blocks are pasted together. A stray
+line with only `!1`/`due:`/`on:`/`at:` (an empty `- !1`) is skipped, and
+the message says which line. List markers (`-`, `*`, `1.`) and empty
+checkboxes are stripped; ticked `- [x]` lines are skipped. Pasting the
+same block twice adds nothing the second time.
+
+Dates must be real days: `due:2026-02-30` stays in the title as text,
+so you'll see it.
 
 ```
 https://claude.ai/chat/abc123
@@ -149,7 +155,7 @@ open task by hand. Save, or Esc to cancel.
 ## Duplicates
 
 When two open tasks look like the same thing, **Possible duplicates**
-appears above the list. *Same task — keep left/right* merges them: one
+appears above the list (the ten most alike, with a count of the rest). *Same task — keep left/right* merges them: one
 task stays, remembering both sources (it shows "also in …"). *Not the
 same* stops that pair being suggested. Unnamed Lunatask tasks are left
 out until named.
@@ -212,6 +218,11 @@ reminder.
 - **Can't reach the app** means the page lost the server (window closed,
   PC asleep). Nothing on the page updates, and changes won't save, until
   it's back; the banner clears itself.
+- **Your tasks can't be loaded** means `tasks.json` itself can't be read:
+  damaged by a sync, or a hand edit. The banner says why and where the
+  file is. Nothing is written to it until it's fixed.
+- An **amber** banner about an entry in `tasks.json` means one entry
+  isn't a usable task. It's ignored but kept in the file.
 
 Setup's [troubleshooting table](setup.md#troubleshooting) says what to do
 about each message.

@@ -253,3 +253,20 @@ test('5.2 — the review queue: unplaced first, each task once', async () => {
   assert.deepEqual(queue.items[1].reasons, ['untriaged', 'overdue']);
   assert.equal(queue.counts.overdue, 2);
 });
+
+test('Q8 — duplicate results are reused only while nothing relevant has changed', async () => {
+  const service = await freshService();
+  const a = await service.create({ title: 'Order printer paper' });
+  const b = await service.create({ title: 'Order the printer paper' });
+  assert.equal((await service.duplicates()).length, 1);
+  // A notes edit doesn't change the pairs, but the pair carries the new notes.
+  await service.update(a.id, { notes: 'A4' });
+  assert.equal((await service.duplicates())[0].a.notes || (await service.duplicates())[0].b.notes, 'A4');
+  // A rename, "not the same", and closing a task each change the answer.
+  await service.update(b.id, { title: 'Renew the domain' });
+  assert.equal((await service.duplicates()).length, 0);
+  await service.update(b.id, { title: 'Order printer paper now' });
+  assert.equal((await service.duplicates()).length, 1);
+  await service.markNotDuplicate(a.id, b.id);
+  assert.equal((await service.duplicates()).length, 0);
+});

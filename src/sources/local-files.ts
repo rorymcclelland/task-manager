@@ -17,9 +17,10 @@
 //
 // Read-only: files are never changed.
 
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
 import type { SourceItem } from '../sync.ts';
+import { readTextFile } from './text-file.ts';
 
 export interface LocalScanOptions {
   /** Folders to leave out entirely (the inbox, for one). */
@@ -65,7 +66,7 @@ export async function scanLocalFolders(folders: string[], options: LocalScanOpti
     try {
       const info = await stat(file);
       if (info.size > MAX_FILE_BYTES) continue;
-      const text = await readFile(file, 'utf8');
+      const text = await readTextFile(file); // UTF-8 or UTF-16 (Q4)
       result.filesRead.add(file);
       result.items.push(...tasksInFile(file, text));
     } catch (error) {

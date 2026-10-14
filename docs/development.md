@@ -63,8 +63,8 @@ docs/                 this documentation, DECISIONS.md, QA reports
 
 ## Tests
 
-`npm test` runs every `test/*.test.ts` with Node's built-in runner. 134
-tests at v0.5.0; they pass in any time zone.
+`npm test` runs every `test/*.test.ts` with Node's built-in runner. 154
+tests at v0.6.0; they pass in any time zone.
 
 | File | Covers |
 |---|---|
@@ -79,6 +79,7 @@ tests at v0.5.0; they pass in any time zone.
 | `agenda.test.ts` | days, clipping, free time, overdue/missed/due-later |
 | `review.test.ts` | review order and reasons |
 | `sync-health.test.ts` | ok / warn / error / stale |
+| `text-file.test.ts` | reading UTF-8, UTF-8 with BOM, UTF-16 LE/BE; refusing non-text |
 | `json-file-store.test.ts` | the file store: missing file, round trip, replacing by id, simultaneous saves, edits made outside the app |
 | `api.test.ts` | end to end: a real server on a random port and a temp file |
 
@@ -153,4 +154,4 @@ keep the checkout outside the sync folder instead.
 
 `package.json` carries the phase: 0.3.0 after Phase 3, 0.4.0 after
 Phase 4, 0.5.0 after Phase 5. Bump the middle number per phase, the last
-for fix sets (Phase 5Q → 0.5.1).
+for small fix sets. Phase 6 (hardening) → 0.6.0.

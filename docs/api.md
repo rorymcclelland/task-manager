@@ -6,12 +6,18 @@ session with a shell. Routes are defined in [`src/app.ts`](../src/app.ts).
 
 - **Base address:** `http://localhost:4321` (or your `PORT`). The server
   only listens on 127.0.0.1, so nothing else on the network can reach it.
-- **No sign-in.** Anything running on this computer can call it; see
-  backlog Q1 for the cross-site protection still to add.
+- **No sign-in, but only for this computer** (D17): requests must be
+  addressed to `localhost`/`127.0.0.1`, and **every POST and PATCH must
+  send `Content-Type: application/json`** (even with no body), and
+  mustn't come from another website. Scripts on this computer just add
+  the header.
 - **Bodies are JSON objects.** An empty body counts as `{}`.
 - **Errors** come back as `{"error": "A readable message"}` with status
-  400 (bad input), 404 (no such task or route) or 500 (see the server
-  console).
+  400 (bad input), 403 (refused: not from this app or computer, or not
+  JSON), 404 (no such task or route), 503 with `"kind": "task-file"`
+  (tasks.json can't be read; nothing has been changed) or 500 (see the
+  server console).
+- **Dates** must be real calendar days: `2026-02-30` is a 400.
 
 Task objects are described in [`data-model.md`](data-model.md). A
 *prioritised task* is a task plus a `priority` object (placement,
@@ -44,10 +50,16 @@ Open tasks grouped into the Eisenhower matrix.
 
 Always in that order. Within a quadrant: soonest due first, then oldest.
 
-### `GET /api/duplicates`
+### `GET /api/duplicates[?limit=N]`
 Likely duplicate pairs among open tasks, most similar first:
 `[{ "a": task, "b": task, "score": 0.75 }]`. Unnamed Lunatask tasks and
-pairs marked "not the same" are left out.
+pairs marked "not the same" are left out. With `?limit=N`, the answer is
+`{ "total": 42, "pairs": [ …the top N… ] }` — the page asks for 10.
+
+### `GET /api/health`
+Problems with the task file's contents that didn't stop it loading —
+entries set aside because they can't be tasks (D18):
+`{ "taskFile": [ "Entry 4 in tasks.json isn't a task…" ] }`.
 
 ### `GET /api/agenda?from=YYYY-MM-DD&days=N`
 Tasks and calendar events laid out by day. `from` defaults to today;
@@ -124,9 +136,11 @@ de-duplicated.
 ### `POST /api/capture/block` `{"text": "…"}` → 201
 Several lines, as pasted from a conversation (format in the user guide).
 Lines already here, matched on source, link and title, are skipped.
+`ignored` lists line numbers left out because they had shortcuts but no
+title, part-way down the list (a stray `- !1`).
 
 ```json
-{ "created": [ …tasks… ], "skipped": 1 }
+{ "created": [ …tasks… ], "skipped": 1, "ignored": [4] }
 ```
 
 400 if no line has a title.
@@ -187,6 +201,9 @@ Run every configured source now and wait for the result. If a sync is
 already running, waits for that one instead of starting another.
 
 ## Examples
+
+Every example sends `Content-Type: application/json`; without it, changes
+are refused (403).
 
 ```powershell
 # Add a task from PowerShell

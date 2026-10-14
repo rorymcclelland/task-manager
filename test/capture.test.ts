@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCapture, parseCaptureBlock, sourceFromUrl } from '../src/capture.ts';
+import { parseCapture, parseCaptureBlock, parseCaptureLines, sourceFromUrl } from '../src/capture.ts';
 
 test('plain text becomes a manual task', () => {
   assert.deepEqual(parseCapture('  Renew   car insurance '), {
@@ -145,4 +145,22 @@ test('4.2 — a block header can set the day for every line', () => {
   assert.deepEqual(a.slot, { start: '10:00', minutes: 30 });
   assert.equal(b.scheduledDate, '2026-10-20');
   assert.equal(b.slot, null);
+});
+
+// ---- Phase 6 -------------------------------------------------------------------
+
+test('Q7 — a stray "- !1" mid-list is skipped and reported, not applied to what follows', () => {
+  const { tasks, ignored } = parseCaptureLines('- Good line\n- !1\n- Another good line');
+  assert.deepEqual(tasks.map((t) => [t.title, t.placement]), [['Good line', 'untriaged'], ['Another good line', 'untriaged']]);
+  assert.deepEqual(ignored, [2]);
+});
+
+test('Q7 — header lines before the first task still set defaults, and a new link starts a new section', () => {
+  const text = '#claude\n!2\n- One\nhttps://gemini.google.com/app/x\n- Two';
+  const { tasks, ignored } = parseCaptureLines(text);
+  assert.deepEqual(tasks.map((t) => [t.title, t.source, t.placement, t.url]), [
+    ['One', 'claude', 'schedule', null],
+    ['Two', 'gemini', 'untriaged', 'https://gemini.google.com/app/x'],
+  ]);
+  assert.deepEqual(ignored, []);
 });

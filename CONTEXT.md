@@ -47,7 +47,7 @@ Same working pattern as the Bolt prototypes:
 
 ## Current status
 
-**Phases 0–5 are built** (14 Oct 2026): a local web app with one list
+**Phases 0–6 are built** (14 Oct 2026): a local web app with one list
 across all sources, quick capture, complete/drop with undo, duplicate merging,
 and an Eisenhower matrix as the default view. Tasks move between quadrants by
 drag or keyboard, due dates raise urgency automatically, and an overfull
@@ -61,8 +61,9 @@ are flagged, a one-card-at-a-time review clears what needs deciding, and
 a failed or stuck sync shows as a red banner.
 See `README.md` to run it, and `docs/README.md` for the full
 documentation. A full QA pass on 14 Oct 2026 found one high-severity
-issue (other websites could change tasks) and several smaller ones; the
-fixes are Phase 5Q in the backlog.
+issue (other websites could change tasks) and eleven smaller ones. All
+were fixed in Phase 6 (hardening) and retested, and the retest found and
+fixed one more.
 
 ## Sync direction per source (backlog 3.5)
 

@@ -590,3 +590,67 @@ checks every 10 seconds until it's back.
 restart starts clean and the first sync re-establishes it. Writing it to
 `tasks.json` would mean rewriting the sync-folder file just to say "still
 fine" (D2).
+
+---
+
+## D17 — Who may call the app: this page and this computer only
+
+_14 Oct 2026 · backlog Q1 (Phase 6)_
+
+**The problem.** QA showed that any website you had open could add,
+complete or drop tasks, because the server accepted any request sent to
+`localhost:4321`. Browsers let any page send "simple" cross-site
+requests (a form post, or `fetch` with a `text/plain` body) without
+asking. The server read any body as JSON and never checked who sent it.
+A related trick, DNS rebinding, could also have let a site *read* the
+list.
+
+**Decision.** Three checks, in `refuseForeign` in `src/app.ts`, before
+any route runs:
+
+1. **The request must be addressed to `localhost`, `127.0.0.1` or
+   `[::1]`** (the `Host` header). Blocks DNS rebinding, reads included.
+2. **A change (POST/PATCH) that says where it came from (`Origin`) must
+   come from this server's own address.** A page on any other site, or
+   another port on this computer, is refused.
+3. **A change must be sent as `Content-Type: application/json`.** A
+   browser only lets another site send that after asking this server
+   first (a CORS "preflight"), and the server never says yes.
+
+Refused requests get a 403 with a sentence saying why.
+
+**Why not a token or a login.** Single user, one machine. Those three
+rules stop browsers, the only way an outsider reaches a server that
+listens on 127.0.0.1, without anything to set up. Scripts on this
+computer (PowerShell, curl, a Claude session) still work: they send no
+`Origin`, and only need the JSON header, which the API docs already
+showed.
+
+**Cost.** Anything calling the API must send `Content-Type:
+application/json` on POST and PATCH, even with an empty body.
+
+---
+
+## D18 — Reading the task file: forgiving about contents, never about losing them
+
+_14 Oct 2026 · backlog Q3, Q5 (Phase 6) · extends D2_
+
+**Decision.** `JsonFileStore` now separates three cases:
+
+| What's in the file | What happens |
+|---|---|
+| A byte-order mark in front (older Notepad) | Ignored; the file reads normally |
+| Not valid JSON, no task list, or a version this app doesn't know | Every request answers 503 with a plain sentence: what's wrong, the file's path, "nothing has been changed". The page shows it as a red banner. **Nothing is written** until the file reads again. |
+| A task with missing or malformed fields | Repaired with the values a new task would have (unknown answers → "not decided", impossible dates → none) and used. It's written back repaired only when the task next changes. |
+| An entry that can't be a task (no `id` or no `title`) | Set aside: left out of the app, **kept in the file exactly as it was**, and named in an amber banner |
+
+**Why.** `tasks.json` lives in a sync folder and can be hand-edited
+(D2), so half-synced or hand-written content will happen. The worst
+outcomes are silently losing data or breaking the page completely. Before
+this, the second happened: one task missing a field stopped the whole
+page loading. Being strict about *not writing* while lenient about
+*reading* avoids both.
+
+**Not done.** Automatic repair of broken JSON. Guessing which half of a
+half-synced file to keep is a decision for a person; the banner says
+where the file is.

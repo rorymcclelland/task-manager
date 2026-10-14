@@ -30,8 +30,11 @@ export function meaningfulWords(title: string): Set<string> {
  * Returns 0 when the titles aren't similar enough to suggest.
  */
 export function similarity(titleA: string, titleB: string): number {
-  const a = meaningfulWords(titleA);
-  const b = meaningfulWords(titleB);
+  return similarityOfWords(meaningfulWords(titleA), meaningfulWords(titleB));
+}
+
+/** The same, for titles already reduced to their words. */
+function similarityOfWords(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
 
   let shared = 0;
@@ -58,22 +61,47 @@ export interface DuplicatePair {
   score: number;
 }
 
-/** Likely duplicate pairs among open tasks, most similar first. */
+/**
+ * Likely duplicate pairs among open tasks, most similar first.
+ *
+ * Q8: this runs on every page refresh, so it has to stay quick as the list
+ * grows. Comparing every pair (and re-reading both titles each time) took
+ * 1.5s at 1,000 open tasks. Now each title is reduced to its words once,
+ * and only tasks that share at least one word are compared — both rules
+ * above need a shared word, so nothing that could match is skipped.
+ */
 export function findDuplicatePairs(tasks: Task[]): DuplicatePair[] {
   // Tasks still waiting for a real name ("Unnamed Lunatask task") all look
   // alike, so leave them out until they've been named.
   const open = tasks.filter((t) => t.status === 'open' && !t.mirror?.placeholderTitle);
-  const pairs: DuplicatePair[] = [];
+  const words = open.map((t) => meaningfulWords(t.title));
 
+  // Which tasks each word appears in.
+  const tasksWith = new Map<string, number[]>();
+  words.forEach((set, index) => {
+    for (const word of set) {
+      const list = tasksWith.get(word);
+      if (list) list.push(index);
+      else tasksWith.set(word, [index]);
+    }
+  });
+
+  const pairs: DuplicatePair[] = [];
   for (let i = 0; i < open.length; i++) {
-    for (let j = i + 1; j < open.length; j++) {
+    // Every later task sharing a word with this one, each once.
+    const candidates = new Set<number>();
+    for (const word of words[i]) {
+      for (const j of tasksWith.get(word)!) if (j > i) candidates.add(j);
+    }
+    for (const j of candidates) {
       const a = open[i];
       const b = open[j];
       if (a.notDuplicateOf.includes(b.id) || b.notDuplicateOf.includes(a.id)) continue;
-      const score = similarity(a.title, b.title);
+      const score = similarityOfWords(words[i], words[j]);
       if (score > 0) pairs.push({ a, b, score });
     }
   }
 
+  // Most similar first; ties in the order the tasks were found, as before.
   return pairs.sort((x, y) => y.score - x.score);
 }

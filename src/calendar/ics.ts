@@ -170,11 +170,17 @@ function toEvent(props: Property[], unknownZones: Set<string>): IcsEvent {
         : 1;
     length = { days: Math.max(1, days) };
   } else {
-    const ms = endProp
-      ? toMs(parseTime(endProp, unknownZones)) - toMs(start)
-      : durationProp
-        ? parseDuration(durationProp.value)
-        : 0;
+    const end = endProp ? parseTime(endProp, unknownZones) : null;
+    let ms = end ? toMs(end) - toMs(start) : durationProp ? parseDuration(durationProp.value) : 0;
+    // Q12: a start in the hour the clocks skip (01:30 on the night they go
+    // forward) lands an hour later, on top of its own end. Calendar apps keep
+    // such an event its written length, so do the same: measure it on the
+    // clock face instead.
+    if (end && end.kind === 'time' && ms <= 0) {
+      const wallMs = (w: Wall) => Date.UTC(w.y, w.m - 1, w.d, w.h, w.mi, w.s);
+      const onTheClock = wallMs(end.wall) - wallMs(start.wall);
+      if (onTheClock > 0) ms = onTheClock;
+    }
     length = { ms: Math.max(0, ms) };
   }
 

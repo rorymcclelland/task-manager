@@ -1,6 +1,6 @@
 # Documentation
 
-_Task oversight · v0.5.0 · 14 October 2026_
+_Task oversight · v0.6.0 · 14 October 2026_
 
 One place to see and prioritise tasks that live across Claude, Gemini,
 Lunatask and the local machine. Single user, runs on your PC.
@@ -20,15 +20,15 @@ Lunatask and the local machine. Single user, runs on your PC.
 | [Data model](data-model.md) | `tasks.json`, every field, what's calculated and what's never stored |
 | [HTTP API](api.md) | Every route, with request and response shapes |
 | [Development](development.md) | Commands, layout, tests, conventions, adding a source |
-| [Decisions](DECISIONS.md) | D1–D16: every structural choice and why |
+| [Decisions](DECISIONS.md) | D1–D18: every structural choice and why |
 
 ## Project
 
 | Document | For |
 |---|---|
 | [Context](../CONTEXT.md) | Why it exists, scope, sync direction per source, open decisions |
-| [Backlog](../BACKLOG.md) | Phases 0–5 (built), 5Q fixes from QA (next), 6 deferred |
-| [QA report, 14 Oct 2026](qa-2026-10-14.md) | Full QA of v0.5.0: findings, evidence, what passed |
+| [Backlog](../BACKLOG.md) | Phases 0–6 (built; 6 = hardening from QA), 7 deferred |
+| [QA report, 14 Oct 2026](qa-2026-10-14.md) | Full QA of v0.5.0 and the retest of v0.6.0: findings, evidence, what passed |
 
 ## At a glance
 
@@ -40,6 +40,7 @@ Lunatask and the local machine. Single user, runs on your PC.
 | **Sources** | Lunatask (API mirror), notes folders (checkboxes, TODOs), Claude & Gemini (paste or inbox file), calendar (.ics) — all read-only |
 | **Prioritisation** | Eisenhower matrix; due dates raise urgency; Do now limit; idle flags |
 | **Time** | Day view with timeline and free time; 14-day Ahead view; time slots on tasks |
-| **Upkeep** | One-card-at-a-time review; banners when a sync fails |
-| **Tests** | 134, Node's built-in runner |
+| **Upkeep** | One-card-at-a-time review; banners when a sync fails or the task file can't be read |
+| **Safety** | Only this page and this computer can change tasks; an unreadable task file is never overwritten |
+| **Tests** | 154, Node's built-in runner |
 | **Repo** | `github.com/rorymcclelland/task-manager` (private) |

@@ -10,9 +10,10 @@
 // can save one from your phone into the synced folder. The app doesn't need
 // to be running at the time — files wait until the next sync.
 
-import { mkdir, readdir, readFile, rename } from 'node:fs/promises';
+import { mkdir, readdir, rename } from 'node:fs/promises';
 import { extname, join } from 'node:path';
-import { parseCaptureBlock } from '../capture.ts';
+import { parseCaptureLines } from '../capture.ts';
+import { readTextFile } from './text-file.ts';
 import type { TaskService } from '../tasks.ts';
 
 export interface InboxResult {
@@ -34,8 +35,13 @@ export async function processInbox(folder: string, service: TaskService, now: Da
     if (!entry.isFile() || !EXTENSIONS.has(extname(entry.name).toLowerCase())) continue;
     const path = join(folder, entry.name);
     try {
-      const lines = parseCaptureBlock(await readFile(path, 'utf8'), service.today());
+      // UTF-8 (with or without BOM) and UTF-16 are all read correctly (Q4);
+      // anything else throws and the file stays where it is.
+      const { tasks: lines, ignored } = parseCaptureLines(await readTextFile(path), service.today());
       const added = await service.captureMany(lines);
+      if (ignored.length) {
+        result.problems.push(`${entry.name}: line${ignored.length === 1 ? '' : 's'} ${ignored.join(', ')} had shortcuts but no task title, so ${ignored.length === 1 ? 'it was' : 'they were'} skipped.`);
+      }
       result.files++;
       result.created += added.created.length;
       result.skipped += added.skipped;
@@ -46,8 +52,10 @@ export async function processInbox(folder: string, service: TaskService, now: Da
       const stamp = now.toISOString().slice(0, 19).replace(/:/g, '-');
       await rename(path, join(processed, `${stamp}-${entry.name}`));
     } catch (error) {
-      // A bad title (say, an empty line with just "!1") throws partway; the
-      // file stays put so nothing is lost, and the problem is reported.
+      // A file that can't be read as text, or a save that fails, leaves the
+      // file where it is so nothing is lost, and the problem is reported.
+      // (Lines with shortcuts but no title don't throw: they're skipped and
+      // reported above.)
       result.problems.push(`${entry.name}: ${(error as Error).message}`);
     }
   }

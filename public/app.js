@@ -39,10 +39,14 @@ function viewFromHash() {
   return /** @type {View} */ (VIEWS.includes(/** @type {View} */ (view)) && view !== 'matrix' ? view : 'matrix');
 }
 
+/** A new time slot's length, unless the task already has one (4.2). */
+const DEFAULT_MINUTES = 30;
+
 const state = {
   open: /** @type {any[]} */ ([]),
   closed: /** @type {any[]} */ ([]),
   duplicates: /** @type {any[]} */ ([]),
+  duplicateTotal: 0,
   /** Phase 3: each source's set-up and last sync, from /api/sync. */
   sync: /** @type {any[]} */ ([]),
   syncing: false,
@@ -64,6 +68,12 @@ const state = {
   /** @type {any} */ review: null,
   /** 5.3: when the page last failed to reach the server; null while it can. */
   /** @type {string | null} */ serverDownSince: null,
+  /** Q3: why tasks.json can't be read, while it can't. */
+  /** @type {string | null} */ taskFileError: null,
+  /** Q5: entries in tasks.json that were set aside. */
+  /** @type {string[]} */ taskFileProblems: [],
+  /** Q11: the date "today" was at the last refresh. */
+  /** @type {string | null} */ lastToday: null,
 };
 
 const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
@@ -71,13 +81,20 @@ const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
 // ---- Talking to the server -----------------------------------------------
 
 async function api(method, path, body) {
+  // Changes are always sent as JSON, even with no body: the server refuses
+  // anything else, which is what stops other websites changing tasks (Q1).
   const response = await fetch(path, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
+    headers: method === 'GET' ? {} : { 'Content-Type': 'application/json' },
+    body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error ?? `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(data.error ?? `Request failed (${response.status})`);
+    // Q3: "task-file" means tasks.json can't be read — shown as a banner.
+    /** @type {any} */ (error).kind = data.kind ?? null;
+    throw error;
+  }
   return data;
 }
 
@@ -88,11 +105,19 @@ async function api(method, path, body) {
 async function refresh() {
   try {
     await load();
-    if (state.serverDownSince) {
+    if (state.serverDownSince || state.taskFileError) {
       state.serverDownSince = null;
+      state.taskFileError = null;
       render();
     }
   } catch (error) {
+    if (/** @type {any} */ (error).kind === 'task-file') {
+      // Q3: the server is fine; the task file isn't. Say that, not "unreachable".
+      state.serverDownSince = null;
+      state.taskFileError = error.message;
+      renderAlerts();
+      return;
+    }
     if (!(error instanceof TypeError)) throw error; // a real error from the server, not "unreachable"
     state.serverDownSince ??= new Date().toISOString();
     renderAlerts();
@@ -101,17 +126,22 @@ async function refresh() {
 }
 
 async function load() {
-  const [open, closed, duplicates, matrix, sync, dayAgenda, ahead, reviewQueue] = await Promise.all([
+  // Q11: a Day view showing today follows the date when it changes, so a
+  // page left open overnight moves on to the new today.
+  const followToday = !state.day || state.day === state.lastToday;
+  const [open, closed, duplicates, matrix, sync, dayAgenda, ahead, reviewQueue, health] = await Promise.all([
     api('GET', '/api/tasks?view=open'),
     api('GET', '/api/tasks?view=closed'),
-    api('GET', '/api/duplicates'),
+    api('GET', '/api/duplicates?limit=10'),
     api('GET', '/api/matrix'),
     api('GET', '/api/sync'),
-    api('GET', `/api/agenda?days=1${state.day ? `&from=${state.day}` : ''}`),
+    api('GET', `/api/agenda?days=1${followToday ? '' : `&from=${state.day}`}`),
     api('GET', '/api/agenda?days=14'),
     api('GET', '/api/review'),
+    api('GET', '/api/health'),
   ]);
-  Object.assign(state, { open, closed, duplicates, matrix, sync, dayAgenda, ahead, reviewQueue });
+  Object.assign(state, { open, closed, duplicates: duplicates.pairs, duplicateTotal: duplicates.total, matrix, sync, dayAgenda, ahead, reviewQueue, taskFileProblems: health.taskFile });
+  state.lastToday = ahead.today;
   state.day = dayAgenda.from;
 
   // 2.2: on first load, put the cursor on the top task in "Do now", so the
@@ -148,7 +178,7 @@ function render() {
   // While reviewing, only the card (and any alert) is on screen.
   const reviewing = state.view === 'review';
   $('duplicates').hidden = reviewing || state.duplicates.length === 0;
-  for (const id of ['closed', 'capture', 'capture-error', 'filters', 'sources']) $(id).hidden = reviewing;
+  for (const id of ['closed', 'capture', 'capture-error', 'filters', 'sources-row']) $(id).hidden = reviewing;
   document.querySelector('.page')?.classList.toggle('is-wide', state.view === 'matrix' || state.view === 'day');
   $('empty').hidden = true;
   if (state.view === 'matrix') renderMatrix();
@@ -343,7 +373,7 @@ function renderSources() {
       el('span', { class: 'dot' }), source.label));
 
     const detail = el('div', { class: 'source-detail', 'data-health': health },
-      el('h3', {}, source.label, el('span', { class: 'source-state' }, text)),
+      el('p', { class: 'source-head' }, el('strong', {}, source.label), el('span', { class: 'source-state' }, text)),
       el('p', { class: 'source-setup' }, source.setup));
     if (source.problem) detail.append(el('p', { class: 'source-error' }, source.problem));
     else if (run?.error) detail.append(el('p', { class: 'source-error' }, run.error));
@@ -360,12 +390,8 @@ function renderSources() {
 
   const button = el('button', { type: 'button', class: 'sync-now' }, state.syncing ? 'Syncing…' : 'Sync now');
   if (state.syncing) button.setAttribute('disabled', '');
-  button.addEventListener('click', (event) => {
-    event.preventDefault(); // it sits inside <summary>: don't open/close the panel
-    event.stopPropagation();
-    syncNow();
-  });
-  chips.append(button);
+  button.addEventListener('click', () => syncNow());
+  $('sync-slot').replaceChildren(button);
 
   // Problems open the panel so they're seen, rather than sitting behind a click.
   if (problems > 0 && !$('sources').dataset.seen) {
@@ -661,8 +687,10 @@ function renderDuplicates() {
   section.hidden = state.duplicates.length === 0;
   if (section.hidden) return;
 
-  const n = state.duplicates.length;
-  section.replaceChildren(el('h2', {}, `${n} possible duplicate${n === 1 ? '' : 's'}`));
+  // Q8: the ten most alike; the rest are counted, and show up as these are settled.
+  const n = state.duplicateTotal;
+  const more = n > state.duplicates.length ? ` — the ${state.duplicates.length} most alike shown` : '';
+  section.replaceChildren(el('h2', {}, `${n} possible duplicate${n === 1 ? '' : 's'}${more}`));
 
   for (const { a, b } of state.duplicates) {
     const keepA = el('button', { type: 'button' }, 'Same task — keep left');
@@ -719,8 +747,6 @@ function renderClosed() {
 const HOUR_PX = 48;
 /** Drops snap to this many minutes. */
 const SNAP = 15;
-/** A new slot's length, unless the task already has one. */
-const DEFAULT_MINUTES = 30;
 
 function renderDay() {
   const container = $('day');
@@ -1063,9 +1089,14 @@ function renderAhead() {
   let emptyRun = [];
   const flushEmpty = () => {
     if (!emptyRun.length) return;
-    const first = dayName(emptyRun[0].date, agenda.today);
-    const last = dayName(emptyRun[emptyRun.length - 1].date, agenda.today);
-    parts.push(el('p', { class: 'ahead-empty' }, emptyRun.length === 1 ? `Nothing on ${first}` : `Nothing on ${first} – ${last}`));
+    // Q12: "Nothing planned today", "Nothing planned on Fri, 16 Oct",
+    // "Nothing planned from today to Tue, 27 Oct".
+    const first = dayWord(emptyRun[0].date, agenda.today);
+    const last = dayWord(emptyRun[emptyRun.length - 1].date, agenda.today);
+    const on = (word) => (/^(today|tomorrow|yesterday)$/.test(word) ? word : `on ${word}`);
+    parts.push(el('p', { class: 'ahead-empty' }, emptyRun.length === 1
+      ? `Nothing planned ${on(first)}`
+      : `Nothing planned from ${first} to ${last}`));
     emptyRun = [];
   };
 
@@ -1191,10 +1222,18 @@ function renderAlerts() {
   const box = $('alerts');
   const alerts = [];
 
+  if (state.taskFileError) {
+    alerts.push(el('div', { class: 'alert' }, el('span', {}, el('strong', {}, 'Your tasks can\'t be loaded. '),
+      state.taskFileError.replace(/^Your task file can't be read: /, 'The task file can\'t be read: '))));
+  }
+  for (const problem of state.taskFileProblems) {
+    alerts.push(el('div', { class: 'alert alert--warn' }, problem));
+  }
+
   if (state.serverDownSince) {
-    alerts.push(el('div', { class: 'alert' },
+    alerts.push(el('div', { class: 'alert' }, el('span', {},
       el('strong', {}, `Can't reach the app since ${timeOf(state.serverDownSince)}. `),
-      'Is npm start still running? Nothing below has updated since then, and changes won\'t save until it\'s back.'));
+      'Is npm start still running? Nothing below has updated since then, and changes won\'t save until it\'s back.')));
   }
 
   for (const source of state.sync.filter((s) => s.health === 'error' || s.health === 'stale')) {
@@ -1628,7 +1667,9 @@ $('capture-input').addEventListener('paste', async (event) => {
     const result = await api('POST', '/api/capture/block', { text });
     const n = result.created.length;
     const skipped = result.skipped ? ` (${result.skipped} already here)` : '';
-    showToast(n ? `Added ${n} task${n === 1 ? '' : 's'}${skipped}` : `Nothing new${skipped}`, null);
+    // Q7: say when a stray "- !1" line was left out, rather than apply it.
+    const ignored = result.ignored?.length ? ` · skipped line ${result.ignored.join(', ')}: no title` : '';
+    showToast((n ? `Added ${n} task${n === 1 ? '' : 's'}${skipped}` : `Nothing new${skipped}`) + ignored, null);
     await refresh();
   }, $('capture-error'));
 });
@@ -1780,6 +1821,8 @@ setInterval(() => {
 setInterval(() => { if (state.serverDownSince && !document.hidden) refresh().catch(() => {}); }, 10_000);
 
 refresh().catch((error) => {
+  // Unreachable server and unreadable task file have their own banners.
+  if (state.serverDownSince || state.taskFileError) return;
   $('empty').hidden = false;
-  $('empty').textContent = `Couldn't reach the task server: ${error.message}`;
+  $('empty').textContent = `Something went wrong loading your tasks: ${error.message}`;
 });

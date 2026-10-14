@@ -32,6 +32,7 @@ describes that file, every field in a task, and what's deliberately
 - **Kept out of git.** `data/` is in `.gitignore`.
 - **`version`** lets a later release migrate old files. A file whose
   version isn't `1` is refused, not overwritten.
+- **A byte-order mark** at the start (older Notepad) is ignored.
 
 ## A task
 
@@ -81,7 +82,7 @@ duplicate and placed:
 | `alsoIn` | SourceRef[] | Other systems it also lives in, added when duplicates are merged. |
 | `important` | `true` / `false` / `null` | Your Eisenhower answer. `null` = not decided yet, which is different from "no". |
 | `urgent` | `true` / `false` / `null` | The same. A near due date can make a task urgent regardless (see "Worked out, not stored" below). |
-| `dueDate` | `YYYY-MM-DD` or `null` | When it must be done by. |
+| `dueDate` | `YYYY-MM-DD` or `null` | When it must be done by. Must be a real day: `2026-02-30` is refused. |
 | `scheduledDate` | `YYYY-MM-DD` or `null` | The day you mean to do it. |
 | `slot` | `{start, minutes}` or `null` | A time on the scheduled day: `start` is `"HH:MM"` (24-hour), `minutes` 5–1440, finishing by midnight. Only allowed with a `scheduledDate`. _Phase 4; may be missing in older files._ |
 | `status` | `open` / `done` / `dropped` / `merged` | Done = you did it. Dropped = it stopped being real. Merged = it was a duplicate. |
@@ -156,8 +157,14 @@ Nothing is rewritten until the task itself changes.
 
 ## Editing the file by hand
 
-It's safe to edit while the app is stopped, or running, because the
-file is re-read on every request. Keep it valid JSON. A file that doesn't
-parse is never overwritten, but until Q3 in the backlog is done the page
-will only say "Something went wrong". Don't remove required fields:
-until Q5 is done, a task missing fields can stop the page loading.
+It's safe to edit while the app is stopped, or running, because the file
+is re-read on every request. What happens to mistakes (D18):
+
+- **Broken JSON** (or a newer version number): a red banner says what's
+  wrong; nothing is written to the file until it reads again.
+- **A byte-order mark** (as older Notepad adds): ignored.
+- **A task with missing or odd fields**, say only `id`, `title` and
+  `status`: filled in with defaults (not decided, no dates) and used. It's
+  saved back repaired only when it next changes.
+- **An entry with no `id` or `title`:** left out, kept in the file as it
+  was, and named in an amber banner until you fix it.

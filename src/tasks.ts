@@ -129,6 +129,11 @@ export class TaskService {
     });
   }
 
+  /** Q5: anything about the task file worth showing (entries set aside). */
+  storeProblems(): string[] {
+    return this.store.problems?.() ?? [];
+  }
+
   /** 5.2: what needs a decision, in the order it's worth deciding. */
   async review(): Promise<ReviewQueue> {
     return buildReviewQueue(await this.listOpen(), this.today(), this.settings);
@@ -140,8 +145,30 @@ export class TaskService {
     return task;
   }
 
+  /** Q8: the last answer, and what it was worked out from. */
+  private duplicateCache: { key: string; pairs: DuplicatePair[] } | null = null;
+
+  /**
+   * Likely duplicates among open tasks. The page asks on every refresh, and
+   * usually nothing relevant has changed, so the answer is reused until an
+   * open task's id, title or "not the same" list changes (Q8).
+   */
   async duplicates(): Promise<DuplicatePair[]> {
-    return findDuplicatePairs(await this.store.all());
+    const tasks = await this.store.all();
+    const key = JSON.stringify(
+      tasks
+        .filter((t) => t.status === 'open' && !t.mirror?.placeholderTitle)
+        .map((t) => [t.id, t.title, t.notDuplicateOf]),
+    );
+    if (this.duplicateCache?.key !== key) {
+      this.duplicateCache = { key, pairs: findDuplicatePairs(tasks) };
+    } else {
+      // Same pairs, but hand back today's copies of the tasks (other fields
+      // — dates, notes — may have changed).
+      const byId = new Map(tasks.map((t) => [t.id, t]));
+      this.duplicateCache.pairs = this.duplicateCache.pairs.map((p) => ({ ...p, a: byId.get(p.a.id)!, b: byId.get(p.b.id)! }));
+    }
+    return this.duplicateCache.pairs;
   }
 
   // ---- Creating and editing (1.3) -----------------------------------------
@@ -155,8 +182,8 @@ export class TaskService {
     const task: Task = {
       id: randomUUID(),
       title,
-      notes: typeof input.notes === 'string' ? input.notes.trim() : '',
-      origin: { source, externalId: input.externalId ?? null, url: cleanUrl(input.url) },
+      notes: requireTextOrEmpty(input.notes, 'notes'),
+      origin: { source, externalId: requireTextOrNull(input.externalId, 'externalId'), url: cleanUrl(input.url) },
       alsoIn: [],
       ...flagsFor(input.placement ?? 'untriaged'),
       dueDate: input.dueDate === undefined ? null : requireDateOrNull(input.dueDate, 'dueDate'),
@@ -186,7 +213,7 @@ export class TaskService {
         updated.mirror = { ...updated.mirror, placeholderTitle: false };
       }
     }
-    if (changes.notes !== undefined) updated.notes = String(changes.notes).trim();
+    if (changes.notes !== undefined) updated.notes = requireTextOrEmpty(changes.notes, 'notes');
     if (changes.source !== undefined) {
       if (!isSource(changes.source)) throw new ValidationError(`Unknown source: ${String(changes.source)}`);
       updated.origin.source = changes.source;
@@ -226,7 +253,9 @@ export class TaskService {
   /** 5.2: undo for "Still relevant" — put the old attention date back. */
   async setReviewedAt(id: string, reviewedAt: string | null): Promise<Task> {
     const task = await this.get(id);
-    if (reviewedAt !== null && Number.isNaN(Date.parse(reviewedAt))) throw new ValidationError('reviewedAt must be a timestamp');
+    if (reviewedAt !== null && (typeof reviewedAt !== 'string' || Number.isNaN(Date.parse(reviewedAt)))) {
+      throw new ValidationError('reviewedAt must be a timestamp');
+    }
     const next: Task = { ...task, updatedAt: this.now().toISOString() };
     if (reviewedAt === null) delete next.reviewedAt;
     else next.reviewedAt = reviewedAt;
@@ -414,6 +443,19 @@ function cleanUrl(value: unknown): string | null {
   if (/^https?:\/\//i.test(url)) return url;
   if (/^lunatask:\/\/[\w/-]+$/i.test(url)) return url;
   throw new ValidationError('Source links must start with http://, https:// or lunatask://');
+}
+
+/** Q9: free text, or nothing. Anything else is a mistake, not an empty note. */
+function requireTextOrEmpty(value: unknown, field: string): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string') throw new ValidationError(`${field} must be text`);
+  return value.trim();
+}
+
+function requireTextOrNull(value: unknown, field: string): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') throw new ValidationError(`${field} must be text`);
+  return value;
 }
 
 function requireTriState(value: unknown, field: string): boolean | null {

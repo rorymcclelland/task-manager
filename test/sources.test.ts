@@ -169,3 +169,37 @@ test('inbox: files are read as capture blocks, then moved to processed/', async 
   const second = await processInbox(inbox, service);
   assert.deepEqual([second.created, second.skipped], [0, 1]);
 });
+
+test('Q4 — inbox: a UTF-16 file (PowerShell 5) imports as written; a non-text file stays put', async () => {
+  const { dir, service } = await freshService();
+  const inbox = join(dir, 'inbox');
+  await mkdir(inbox);
+  await writeFile(join(inbox, 'ps.md'), Buffer.from('﻿#gemini\r\n- Renew the domain\r\n', 'utf16le'));
+  await writeFile(join(inbox, 'binary.md'), Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]));
+  const result = await processInbox(inbox, service);
+  assert.equal(result.created, 1);
+  const [task] = await service.listOpen();
+  assert.deepEqual([task.title, task.origin.source], ['Renew the domain', 'gemini']);
+  assert.match(result.problems[0], /binary\.md: doesn't look like a text file/);
+  assert.ok((await readdir(inbox)).includes('binary.md'));
+});
+
+test('Q7 — inbox: a stray "- !1" line is reported', async () => {
+  const { dir, service } = await freshService();
+  const inbox = join(dir, 'inbox');
+  await mkdir(inbox);
+  await writeFile(join(inbox, 'slip.md'), '- Good line\n- !1\n- Another good line\n');
+  const result = await processInbox(inbox, service);
+  assert.equal(result.created, 2);
+  assert.match(result.problems[0], /slip\.md: line 2 had shortcuts but no task title/);
+  assert.ok((await service.listOpen()).every((t) => t.priority.placement === 'untriaged'));
+});
+
+test('Q4 — notes folders: UTF-16 notes are scanned too', async () => {
+  const { dir } = await freshService();
+  const notes = join(dir, 'notes');
+  await mkdir(notes);
+  await writeFile(join(notes, 'ps.md'), Buffer.from('﻿- [ ] Written by PowerShell\r\n', 'utf16le'));
+  const scan = await scanLocalFolders([notes]);
+  assert.deepEqual(scan.items.map((i) => i.title), ['Written by PowerShell']);
+});

@@ -26,8 +26,9 @@
 //   - [ ] Book the venue due:2026-11-02            below it
 //   - [x] Already done                           ← ticked: skipped
 //
-// List markers (-, *, •, 1.) and empty checkboxes are stripped. A line with
-// shortcuts but no title sets defaults for the lines after it.
+// List markers (-, *, •, 1.) and empty checkboxes are stripped. Lines with
+// shortcuts but no title before the first task set defaults for the lines
+// after them; later on, only a new link or #source does (see parseCaptureLines).
 
 import { isDateString, isSource, isTimeString, type Slot, type Source } from './model.ts';
 import { QUADRANTS, type Placement } from './priority.ts';
@@ -77,16 +78,39 @@ export function parseCapture(text: string, today: string | null = null): Capture
 
 /** Parse several lines. Returns one result per task line, in order. */
 export function parseCaptureBlock(text: string, today: string | null = null): CaptureResult[] {
-  const results: CaptureResult[] = [];
+  return parseCaptureLines(text, today).tasks;
+}
+
+/**
+ * Parse several lines, and also say which lines were skipped.
+ *
+ * Lines with shortcuts but no title are *header* lines: they set the
+ * source, link, quadrant or dates for the task lines under them. Q7: once
+ * tasks have started, only a line that names a new link or `#source` is
+ * taken as a header — that starts a new section, as when two conversations'
+ * blocks are pasted together. A title-less line with only `!1`, `due:`,
+ * `on:` or `at:` in the middle of a list is almost always a slip (an empty
+ * `- !1`), so it's skipped and its line number reported, rather than
+ * quietly applying to every line after it.
+ */
+export function parseCaptureLines(text: string, today: string | null = null): { tasks: CaptureResult[]; ignored: number[] } {
+  const tasks: CaptureResult[] = [];
+  const ignored: number[] = [];
   let defaults: Defaults = NO_DEFAULTS;
 
-  for (const raw of text.split(/\r?\n/)) {
+  text.split(/\r?\n/).forEach((raw, index) => {
     const line = raw.trim();
-    if (!line || TICKED_CHECKBOX.test(line)) continue;
+    if (!line || TICKED_CHECKBOX.test(line)) return;
 
     const parts = parseLine(line.replace(LIST_MARKER, '').replace(OPEN_CHECKBOX, ''));
-    if (!parts.title) {
-      // A header line: shortcuts with no title set defaults for what follows.
+    if (parts.title) {
+      tasks.push(withDefaults(parts, defaults, today));
+      return;
+    }
+
+    const { title: _none, ...shortcuts } = parts;
+    if (tasks.length === 0) {
+      // Still in the header: each line adds to the defaults.
       defaults = {
         source: parts.source ?? defaults.source,
         url: parts.url ?? defaults.url,
@@ -95,11 +119,13 @@ export function parseCaptureBlock(text: string, today: string | null = null): Ca
         scheduledDate: parts.scheduledDate ?? defaults.scheduledDate,
         start: parts.start ?? defaults.start,
       };
-      continue;
+    } else if (parts.url || parts.source) {
+      defaults = shortcuts; // a new section starts afresh
+    } else {
+      ignored.push(index + 1);
     }
-    results.push(withDefaults(parts, defaults, today));
-  }
-  return results;
+  });
+  return { tasks, ignored };
 }
 
 /** Work out which system a link points into, if it's one we know. */
