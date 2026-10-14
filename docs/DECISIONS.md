@@ -113,3 +113,63 @@ something odd you can see why. When real Claude/Gemini/Lunatask imports
 arrive in Phase 3, matching on each system's own ID (`externalId`) will catch
 exact re-imports, and this fuzzy match only has to catch the same task
 described in two places.
+
+---
+
+## D5 — Priority is worked out, not stored
+
+_14 Oct 2026 · backlog 2.1, 2.4_
+
+**Decision.** A task stores only your two answers (`important`, `urgent`)
+and its `dueDate`. Which quadrant it's in is calculated from those plus
+today's date every time the page asks (`src/priority.ts`). Nothing about
+quadrants is written to `tasks.json`.
+
+**Why.** 2.4 asks for urgency to follow the due date "without my input". If
+the quadrant were stored, something would have to wake up each morning and
+rewrite it — and a sync-folder file being rewritten in the background is
+exactly what D2 is trying to avoid. Calculating it means the matrix is
+always right for today, and the data model from D3 didn't need to change.
+
+**The urgency rule, in one sentence:** a task due within 3 days, or overdue,
+is urgent whatever you said; otherwise your answer stands; if you haven't
+answered and it has a later due date, it's not urgent yet.
+
+- **The due date can only make a task *more* urgent.** If you mark something
+  urgent that's due in a month, you know something the date doesn't.
+- **3 days** is a starting guess, set with `URGENT_WITHIN_DAYS`. It covers
+  "today, tomorrow and the day after" — enough warning to act on, short
+  enough that "Do now" doesn't fill with next week.
+- **A task is only placed once both questions are answered.** Until then it
+  waits in "Not placed yet" — the untriaged pile D3 kept `null` for.
+- **When the rule overrules you.** Drag a task due tomorrow into "Schedule"
+  and your answer *is* saved, but the task stays in "Do now" and the app says
+  why. Once the date moves or is cleared, your answer takes over.
+
+**Rejected.** Storing the quadrant (needs a background job, and two sources
+of truth that can disagree). Letting your answer override the date (then
+time passing changes nothing, which is the opposite of 2.4).
+
+---
+
+## D6 — One overload rule: a soft limit on "Do now"
+
+_14 Oct 2026 · backlog 2.5_
+
+**Decision.** "Do now" is flagged when it holds more than 5 tasks
+(`DO_NOW_LIMIT`). The quadrant turns red, shows "7 / 5", and says plainly
+that it's over the limit. Nothing is blocked — it's a warning, not a cap.
+The other quadrants have no limit.
+
+**Why only "Do now".** It's the one quadrant whose usefulness depends on
+being short; a long "Schedule" list is normal and healthy. A limit
+elsewhere would be noise.
+
+**Why a count rather than a percentage.** "More than 5" is explainable at
+a glance and doesn't change meaning as the rest of the list grows or
+shrinks. Considered: flagging when "Do now" is more than half of all
+placed tasks — rejected because it fires on small lists and goes quiet on
+big ones, which is backwards.
+
+**The limit counts every source,** even while a source filter is on —
+overload is about your whole week, not one system.

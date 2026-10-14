@@ -47,10 +47,12 @@ Same working pattern as the Bolt prototypes:
 
 ## Current status
 
-**Phase 0 and Phase 1 are built** (14 Oct 2026): a local web app with one list
-across all sources, quick capture, complete/drop with undo, and duplicate
-merging. Tasks are entered by hand for now — pulling them in automatically is
-Phase 3. See `README.md` to run it.
+**Phases 0, 1 and 2 are built** (14 Oct 2026): a local web app with one list
+across all sources, quick capture, complete/drop with undo, duplicate merging,
+and an Eisenhower matrix as the default view — tasks move between quadrants by
+drag or keyboard, due dates raise urgency automatically, and an overfull
+"Do now" is flagged. Tasks are entered by hand for now — pulling them in
+automatically is Phase 3. See `README.md` to run it.
 
 ## Open decisions
 

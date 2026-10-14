@@ -1,6 +1,6 @@
 # Task Management App — Backlog
 
-_Last updated: 14 October 2026 · Status: Phases 0 and 1 built; Phase 2 next_
+_Last updated: 14 October 2026 · Status: Phases 0–2 built; Phase 3 next_
 
 Organised by **job to be done**, in phases. Each phase should be usable on its
 own — the aim is that the app earns its place from Phase 1, not after Phase 5.
@@ -43,7 +43,7 @@ _The single job that justifies the project: see everything in one place._
 
 ---
 
-## Phase 2 — Prioritisation that matches how I decide
+## Phase 2 — Prioritisation that matches how I decide ✅
 
 - **2.1** When I review my list, I want to place tasks on an Eisenhower matrix
   (important/urgent), so prioritisation uses the model I already think in.
@@ -55,6 +55,9 @@ _The single job that justifies the project: see everything in one place._
   automatically, so time passing updates my priorities without my input.
 - **2.5** When a quadrant is overloaded, I want to see that plainly, so I notice
   when "urgent and important" has stopped meaning anything.
+
+_Built as: matrix is the default view; drag or keys 1–4 to move; due within
+3 days = urgent; "Do now" flagged above 5. Reasons in D5 and D6._
 
 ---
 
