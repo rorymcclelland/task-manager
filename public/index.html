@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tasks</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ccircle cx=%228%22 cy=%228%22 r=%226%22 fill=%22none%22 stroke=%22%232f5bd3%22 stroke-width=%222%22/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main class="page">
+    <header class="top">
+      <h1>Tasks</h1>
+      <p class="count" id="count" aria-live="polite"></p>
+    </header>
+
+    <!-- 1.3: capture. Focus it from anywhere with "n" or "/". -->
+    <form id="capture" class="capture" autocomplete="off">
+      <label for="capture-input" class="visually-hidden">Add a task</label>
+      <input id="capture-input" name="text" type="text"
+             placeholder="Add a task…  (#claude #gemini #lunatask #local · paste a link to attach it)">
+      <button type="submit">Add</button>
+    </form>
+    <p class="capture-error" id="capture-error" role="alert"></p>
+
+    <!-- 1.2: filter the single list by where tasks came from. -->
+    <nav class="filters" id="filters" aria-label="Filter by source"></nav>
+
+    <!-- 1.5: suggested duplicates appear here when there are any. -->
+    <section class="duplicates" id="duplicates" hidden></section>
+
+    <!-- 1.1: the one list. -->
+    <ul class="list" id="list"></ul>
+    <p class="empty" id="empty" hidden></p>
+
+    <details class="closed" id="closed">
+      <summary>Done, dropped and merged</summary>
+      <ul class="list list--closed" id="closed-list"></ul>
+    </details>
+
+    <footer class="keys">
+      <span><kbd>n</kbd> add</span>
+      <span><kbd>j</kbd>/<kbd>k</kbd> move</span>
+      <span><kbd>x</kbd> done</span>
+      <span><kbd>d</kbd> drop</span>
+      <span><kbd>e</kbd> edit</span>
+      <span><kbd>o</kbd> open source</span>
+    </footer>
+  </main>
+
+  <div class="toast" id="toast" role="status" hidden>
+    <span id="toast-text"></span>
+    <button type="button" id="toast-undo">Undo</button>
+  </div>
+</body>
+</html>
