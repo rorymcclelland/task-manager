@@ -1,6 +1,6 @@
 # Task Management App — Backlog
 
-_Last updated: 14 October 2026 · Status: Phases 0–6 built; Phase 7 (later, maybe) and Phase 8 (phone view) not started_
+_Last updated: 14 October 2026 · Status: Phases 0–6 built; Phase 7 (later, maybe) and Phase 8 (phone view and reporting) not started_
 
 Organised by **job to be done**, in phases. Each phase should be usable on its
 own — the aim is that the app earns its place from Phase 1, not after Phase 5.
@@ -294,7 +294,6 @@ Explicitly deferred. Written down so they stop occupying thinking space.
 - Recurring tasks.
 - Projects or hierarchy above individual tasks.
 - Effort/time estimates and capacity planning.
-- Any reporting or analytics on completion.
 - **7.1 Settings pane.** When I want to connect or change a source, I want
   to do it from a settings pane in the app, so I never have to create or
   edit a text file to configure it.
@@ -317,7 +316,7 @@ Explicitly deferred. Written down so they stop occupying thinking space.
 
 ---
 
-## Phase 8 — On my phone
+## Phase 8 — On my phone, and looking back
 
 - **8.1 Phone view.** When I'm away from my PC, I want to see and update
   my list from my phone, so the oversight doesn't stop at my desk.
@@ -327,6 +326,15 @@ Explicitly deferred. Written down so they stop occupying thinking space.
   _Needs deciding first:_ how the phone reaches it (the app on the home
   network, a tunnel, or hosting it somewhere), which undoes "local only"
   (D1, D17), so it needs sign-in and a decision entry of its own.
+- **8.2 Reporting.** When I look back over a week or a month, I want to
+  see what I finished, dropped and let slide, so I can tell whether the
+  system is working and where my time really goes.
+  _Today:_ the data is already there. Every task keeps when it was
+  created and closed, how it closed (done, dropped, merged), where it came
+  from and its quadrant answers, and nothing is ever deleted, so reports
+  can cover history from Phase 1 onwards.
+  _Starting points:_ done vs dropped by week; by source; how long tasks
+  sit before closing; how much of Do now actually got done.
 
 ---
 

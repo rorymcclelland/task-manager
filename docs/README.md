@@ -27,7 +27,7 @@ Lunatask and the local machine. Single user, runs on your PC.
 | Document | For |
 |---|---|
 | [Context](../CONTEXT.md) | Why it exists, scope, sync direction per source, open decisions |
-| [Backlog](../BACKLOG.md) | Phases 0–6 (built; 6 = hardening from QA), 7 later/maybe, 8 phone view |
+| [Backlog](../BACKLOG.md) | Phases 0–6 (built; 6 = hardening from QA), 7 later/maybe, 8 phone view and reporting |
 | [QA report, 14 Oct 2026](qa-2026-10-14.md) | Full QA of v0.5.0 and the retest of v0.6.0: findings, evidence, what passed |
 
 ## At a glance
