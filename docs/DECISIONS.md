@@ -173,3 +173,157 @@ big ones, which is backwards.
 
 **The limit counts every source,** even while a source filter is on —
 overload is about your whole week, not one system.
+
+---
+
+## D7 — Lunatask: mirror over the API, and name tasks here once
+
+_14 Oct 2026 · backlog 3.1 · settles open decision 3 in `CONTEXT.md`_
+
+**What Lunatask actually exposes.** Lunatask has a public API
+([docs](https://lunatask.app/api/overview)), authenticated with an access
+token you create in the desktop app. But all task text is end-to-end
+encrypted, so **the API never returns a task's name or note**. It does return
+each task's ID, status (later / next / in progress / waiting / completed),
+Eisenhower quadrant, priority, motivation, scheduled date and timestamps.
+There are no webhooks. The desktop app has an export, but Lunatask's own
+docs call it "somewhat limited" and say its format may change without
+notice.
+
+**Decision.** Mirror Lunatask through the API (`src/sources/lunatask.ts`).
+Each open Lunatask task appears here as **"Unnamed Lunatask task"** with
+what Lunatask knows about it underneath and a `lunatask://tasks/<id>` link
+that opens it in the Lunatask app. You name it here once; syncs never
+touch a title. Lunatask's Eisenhower answer places the task on the matrix
+until you place it yourself. Its scheduled date always follows Lunatask.
+
+**Why the API, despite the missing names.**
+
+- It's the only **documented, stable** route. The export is a manual step in
+  a desktop app, in a format we can't see and that may change.
+- It answers the oversight question that matters most — *how much is open
+  in Lunatask, how urgent, and is it done yet* — automatically, every 15
+  minutes, without you doing anything.
+- Naming is a one-off cost per task, and the link makes it a two-second job.
+
+**What it costs.** A Lunatask list of 80 open tasks means 80 tasks to name
+before the matrix reads well. Unnamed tasks are left out of duplicate
+suggestions (they'd all match each other).
+
+**Worth doing next.** If you export from Lunatask (Settings → Export) and
+drop the file in the project folder, an importer could fill in names by
+matching Lunatask's task IDs — a one-off catch-up, with the API carrying on
+for status. That needs a real export file to look at, so it isn't built.
+
+**Rejected for now.** Export-file only (manual, undocumented format, no
+status updates between exports). Manual entry (that's what Phase 1 already
+does).
+
+---
+
+## D8 — Sync direction: every source is read-only (backlog 3.5)
+
+_14 Oct 2026 · backlog 3.5_
+
+**Decision.** Nothing this app does is written back to any other system.
+
+| Source | Direction | What flows in |
+|---|---|---|
+| Lunatask | Mirror, read-only | Open tasks; completed there → done here; deleted there → dropped here; scheduled date |
+| Claude | One-way push in | Tasks you paste or drop in the inbox |
+| Gemini | One-way push in | The same |
+| Files on this computer | Mirror, read-only | `- [ ]` and `TODO:` lines; ticked or deleted → done here |
+
+Recorded in `CONTEXT.md` too, as the backlog asked.
+
+**Why read-only.** This app's job is *oversight*. Write-back means this app
+can break the systems you rely on — a bug here could complete forty
+Lunatask tasks at once — and it's the hardest kind of change to undo.
+Read-only first, and add write-back only where the friction of doing it
+twice turns out to be real.
+
+**How a mirror closes things** (`src/sync.ts`): only when the source
+*changes* — a task the source had open is now closed or gone. Reopen it
+here and the next sync leaves it open. A sync never reopens anything. A
+file that can't be read, or a Lunatask answer that looks partial, never
+counts as "gone".
+
+**The friction this leaves.** Complete a Lunatask task here and it's still
+open in Lunatask. The app says so at that moment ("tick it off in Lunatask
+too"). If that gets old, completion write-back is one API call
+(`PUT /v1/tasks/<id>` with `status: "completed"`) — the obvious first
+write-back to add.
+
+---
+
+## D9 — Claude and Gemini: deliberate capture, not scraping
+
+_14 Oct 2026 · backlog 3.2, 3.3 · settles open decision 4 in `CONTEXT.md`_
+
+**Decision.** Tasks from conversations arrive because you (or the
+assistant) deliberately send them, in the same text format as the capture
+box. Two routes:
+
+1. **Paste a block.** Paste several lines into the capture box and each
+   becomes a task. A first line with just a link (or `#claude`) sets the
+   source and link for every line under it. A `claude.ai` or Gemini link
+   on its own is enough to say where the tasks came from.
+2. **The inbox folder.** Any `.md` or `.txt` file in `data/inbox` (or
+   `INBOX_FOLDER`) is read the same way at the next sync, then moved to
+   `inbox/processed/`. This works when the app isn't running, from anything
+   that can save a file into your sync folder — including a Claude session
+   that's working on your computer.
+
+Pasting the same block twice adds nothing the second time: a line with the
+same source, link and title as an existing task (open or closed) is
+skipped. Typed one-line captures are never de-duplicated — typing it is
+deliberate.
+
+**Why not scrape.** Claude's data export and Google Takeout give whole
+conversation histories, not tasks. Pulling commitments out of them means
+guessing what counted as an agreement, and the guesses would be wrong
+often enough that the list stops being trusted — the opposite of 1.1.
+Neither service offers an API that lists conversations as they happen.
+Deliberate capture costs one paste at the end of a conversation, and what
+lands is exactly what was agreed.
+
+**Making it a habit.** Ask at the end of a conversation: *"List what we
+agreed I'd do as a task block: this conversation's link on the first line,
+then one task per line as `- title`, with `!1`–`!4` if it's clear which
+quadrant, and `due:YYYY-MM-DD` if there's a date."* For Claude, that
+instruction can go in a Project's instructions so it happens without
+asking.
+
+---
+
+## D10 — Files on this computer: checkboxes and TODOs in notes
+
+_14 Oct 2026 · backlog 3.4_
+
+**Decision.** `LOCAL_FOLDERS` lists folders to scan. In `.md` and `.txt`
+files, an unticked checkbox (`- [ ] …`) or a line with `TODO:` becomes a
+task, mirrored like Lunatask (D8). The path and line number show under the
+task.
+
+**Why these two markers.** They're what notes apps (Obsidian, VS Code,
+plain Markdown) already use, so nothing about how you write notes has to
+change. Only upper-case `TODO` counts, so prose like "my todo list" doesn't.
+
+**Limits, on purpose.**
+
+- **Notes, not code.** Code files are full of `TODO` comments that are
+  someone's reminder about the code, not your task list.
+- **Hidden folders, `node_modules` and the inbox are skipped**; folders
+  are read 4 levels deep, at most 2,000 files, files over 1 MB ignored.
+- **A task's ID is the file plus the line's text**, not its line number —
+  so adding lines above it doesn't make it a new task. Editing the text
+  does: the old task closes and a new one appears.
+- **Deleting the line counts as done** (that's how most people tick off a
+  TODO), but a file that's been moved, deleted or can't be read changes
+  nothing.
+- **No clickable link.** Browsers won't open `file://` links from a web
+  page, so the path is shown as text.
+
+**Rejected.** "Recently changed files imply work in progress" — too much
+guessing for a list that has to be believable. Registering it by hand is
+already one line in the capture box with `#local`.

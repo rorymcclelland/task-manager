@@ -3,3 +3,6 @@ node_modules/
 # Your actual tasks. Personal data stays on your machine and in your sync
 # folder; it never goes to GitHub.
 data/
+
+# Secrets (the Lunatask token) and your own folder paths.
+.env

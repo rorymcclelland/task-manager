@@ -5,6 +5,7 @@
 // here, where they can be tested without a server.
 
 import { randomUUID } from 'node:crypto';
+import type { CaptureResult } from './capture.ts';
 import { findDuplicatePairs, type DuplicatePair } from './duplicates.ts';
 import { isDateString, isSource, type Source, type SourceRef, type Task } from './model.ts';
 import {
@@ -19,6 +20,7 @@ import {
   type PrioritySettings,
 } from './priority.ts';
 import type { TaskStore } from './store/task-store.ts';
+import { planSync, type SourceItem, type SyncOptions, type SyncReport } from './sync.ts';
 
 /** Thrown for bad input; the HTTP layer turns it into a 400 response. */
 export class ValidationError extends Error {}
@@ -33,6 +35,14 @@ export interface NewTask {
   url?: string | null;
   /** Optionally place it on the matrix straight away (capture's !1–!4). */
   placement?: Placement;
+  dueDate?: string | null;
+}
+
+/** What happened when several captured tasks were added at once. */
+export interface CaptureManyResult {
+  created: Task[];
+  /** Lines skipped because the same task is already here. */
+  skipped: number;
 }
 
 /** The fields you can edit directly. Status changes have their own methods. */
@@ -112,7 +122,7 @@ export class TaskService {
       origin: { source, externalId: input.externalId ?? null, url: cleanUrl(input.url) },
       alsoIn: [],
       ...flagsFor(input.placement ?? 'untriaged'),
-      dueDate: null,
+      dueDate: input.dueDate === undefined ? null : requireDateOrNull(input.dueDate, 'dueDate'),
       scheduledDate: null,
       status: 'open',
       mergedInto: null,
@@ -129,7 +139,13 @@ export class TaskService {
     const task = await this.get(id);
     const updated: Task = { ...task, origin: { ...task.origin } };
 
-    if (changes.title !== undefined) updated.title = requireTitle(changes.title);
+    if (changes.title !== undefined) {
+      updated.title = requireTitle(changes.title);
+      // Naming a task Lunatask couldn't name for us: it's a real title now.
+      if (updated.mirror?.placeholderTitle && updated.title !== task.title) {
+        updated.mirror = { ...updated.mirror, placeholderTitle: false };
+      }
+    }
     if (changes.notes !== undefined) updated.notes = String(changes.notes).trim();
     if (changes.source !== undefined) {
       if (!isSource(changes.source)) throw new ValidationError(`Unknown source: ${String(changes.source)}`);
@@ -146,6 +162,48 @@ export class TaskService {
     updated.updatedAt = this.now().toISOString();
     await this.store.save(updated);
     return updated;
+  }
+
+  // ---- Bringing tasks in from elsewhere (Phase 3) ---------------------------
+
+  /**
+   * Add several captured tasks at once — a block pasted from a Claude or
+   * Gemini conversation, or a file from the inbox folder (3.2, 3.3).
+   *
+   * Unlike typing one task, a block may well be pasted twice, so a line is
+   * skipped when a task with the same source, link and title is already
+   * here — open or closed, so finished tasks don't come back either.
+   */
+  async captureMany(lines: CaptureResult[]): Promise<CaptureManyResult> {
+    const existing = await this.store.all();
+    const keys = new Set(existing.map((t) => captureKey(t.origin.source, t.origin.url, t.title)));
+    const created: Task[] = [];
+    let skipped = 0;
+
+    for (const line of lines) {
+      const key = captureKey(line.source, line.url, line.title);
+      if (keys.has(key)) {
+        skipped++;
+        continue;
+      }
+      keys.add(key); // also catches the same line twice in one block
+      created.push(await this.create(line));
+    }
+    return { created, skipped };
+  }
+
+  /**
+   * Bring this app in step with what a source system says (3.1, 3.4). The
+   * rules are in src/sync.ts; this just loads, plans and saves.
+   *
+   * Like merge, this reads then writes in two steps; an edit landing in
+   * between could be overwritten. With one person using one app that's a
+   * window of milliseconds, so it's accepted rather than engineered around.
+   */
+  async applySync(source: Source, items: SourceItem[], options: SyncOptions): Promise<SyncReport> {
+    const plan = planSync(await this.store.all(), source, items, options, this.now().toISOString(), randomUUID);
+    if (plan.changed.length > 0) await this.store.saveMany(plan.changed);
+    return plan.report;
   }
 
   // ---- Prioritising (2.3) --------------------------------------------------
@@ -281,10 +339,11 @@ function cleanUrl(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const url = String(value).trim();
   if (!url) return null;
-  // Only web links: this URL ends up as a clickable link in the page, and a
-  // "javascript:" link would run code when clicked.
-  if (!/^https?:\/\//i.test(url)) throw new ValidationError('Source links must start with http:// or https://');
-  return url;
+  // Only web links and Lunatask's own links: this URL ends up as a clickable
+  // link in the page, and a "javascript:" link would run code when clicked.
+  if (/^https?:\/\//i.test(url)) return url;
+  if (/^lunatask:\/\/[\w/-]+$/i.test(url)) return url;
+  throw new ValidationError('Source links must start with http://, https:// or lunatask://');
 }
 
 function requireTriState(value: unknown, field: string): boolean | null {
@@ -296,6 +355,12 @@ function requireDateOrNull(value: unknown, field: string): string | null {
   if (value === null || value === '') return null;
   if (isDateString(value)) return value;
   throw new ValidationError(`${field} must be a YYYY-MM-DD date`);
+}
+
+/** Two captured tasks count as the same if source, link and title match
+ *  (ignoring case and spacing in the title). */
+function captureKey(source: Source, url: string | null, title: string): string {
+  return JSON.stringify([source, url ?? '', title.replace(/\s+/g, ' ').trim().toLowerCase()]);
 }
 
 function addOnce(list: string[], id: string): string[] {

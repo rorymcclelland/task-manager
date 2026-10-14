@@ -1,6 +1,6 @@
 # Task Management App — Backlog
 
-_Last updated: 14 October 2026 · Status: Phases 0–2 built; Phase 3 next_
+_Last updated: 14 October 2026 · Status: Phases 0–3 built; Phase 4 next_
 
 Organised by **job to be done**, in phases. Each phase should be usable on its
 own — the aim is that the app earns its place from Phase 1, not after Phase 5.
@@ -61,7 +61,7 @@ _Built as: matrix is the default view; drag or keys 1–4 to move; due within
 
 ---
 
-## Phase 3 — Pulling in the sources
+## Phase 3 — Pulling in the sources ✅
 
 Each source is independent — build whichever is cheapest to prove first.
 
@@ -76,6 +76,16 @@ Each source is independent — build whichever is cheapest to prove first.
 - **3.5 Sync direction.** Decide per source whether it is read-only (mirror),
   write-back (completing here completes there), or two-way — and record the
   choice in `CONTEXT.md`.
+
+_Built as: Lunatask mirrored over its API every 15 minutes — names are
+encrypted by Lunatask, so each task is named here once (D7). Claude and
+Gemini by pasting a block of lines or dropping a file in the inbox folder
+(D9). Checkboxes and TODOs in `LOCAL_FOLDERS` mirrored (D10). Every source
+read-only (D8). A "Sources" line shows each sync's result or error — the
+start of 5.3._
+
+_Possible follow-ups: fill in Lunatask names from an export file (needs a
+sample export to build against); write completion back to Lunatask._
 
 ---
 

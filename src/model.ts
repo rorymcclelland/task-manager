@@ -63,6 +63,25 @@ export interface Task {
   updatedAt: string;
   /** When the task left "open" (done, dropped or merged). Null while open. */
   closedAt: string | null;
+
+  /** Only on tasks a sync keeps up to date (Lunatask, files on this
+   *  computer). Missing on everything else, including tasks saved before
+   *  Phase 3 — so older task files still load unchanged. See src/sync.ts. */
+  mirror?: MirrorInfo;
+}
+
+/** What a sync knows about a task it's mirroring from another system. */
+export interface MirrorInfo {
+  /** What the other system last said about it, in words — e.g.
+   *  "Lunatask: next · high priority". Shown under the task. */
+  detail: string;
+  /** Whether the other system had it open at the last sync. A sync only
+   *  closes the task here when this flips from true to false — so if you
+   *  reopen it here, the next sync leaves it alone. */
+  openInSource: boolean;
+  /** True while the title is a stand-in because the other system wouldn't
+   *  give us one (Lunatask encrypts names). Cleared when you rename it. */
+  placeholderTitle: boolean;
 }
 
 export function isSource(value: unknown): value is Source {

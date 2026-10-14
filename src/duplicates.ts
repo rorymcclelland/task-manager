@@ -60,7 +60,9 @@ export interface DuplicatePair {
 
 /** Likely duplicate pairs among open tasks, most similar first. */
 export function findDuplicatePairs(tasks: Task[]): DuplicatePair[] {
-  const open = tasks.filter((t) => t.status === 'open');
+  // Tasks still waiting for a real name ("Unnamed Lunatask task") all look
+  // alike, so leave them out until they've been named.
+  const open = tasks.filter((t) => t.status === 'open' && !t.mirror?.placeholderTitle);
   const pairs: DuplicatePair[] = [];
 
   for (let i = 0; i < open.length; i++) {

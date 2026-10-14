@@ -34,6 +34,9 @@ const state = {
   open: /** @type {any[]} */ ([]),
   closed: /** @type {any[]} */ ([]),
   duplicates: /** @type {any[]} */ ([]),
+  /** Phase 3: each source's set-up and last sync, from /api/sync. */
+  sync: /** @type {any[]} */ ([]),
+  syncing: false,
   /** @type {any} */ matrix: null,
   /** The matrix is the default view (2.2); #list in the address shows the plain list. */
   /** @type {'matrix' | 'list'} */ view: location.hash === '#list' ? 'list' : 'matrix',
@@ -59,13 +62,14 @@ async function api(method, path, body) {
 }
 
 async function refresh() {
-  const [open, closed, duplicates, matrix] = await Promise.all([
+  const [open, closed, duplicates, matrix, sync] = await Promise.all([
     api('GET', '/api/tasks?view=open'),
     api('GET', '/api/tasks?view=closed'),
     api('GET', '/api/duplicates'),
     api('GET', '/api/matrix'),
+    api('GET', '/api/sync'),
   ]);
-  Object.assign(state, { open, closed, duplicates, matrix });
+  Object.assign(state, { open, closed, duplicates, matrix, sync });
 
   // 2.2: on first load, put the cursor on the top task in "Do now", so the
   // answer to "what now?" is already highlighted.
@@ -91,6 +95,7 @@ function render() {
   $('count').textContent = `${state.open.length} open · ${doNow} to do now`;
   renderViewSwitch();
   renderFilters();
+  renderSources();
   renderDuplicates();
 
   const matrixView = state.view === 'matrix';
@@ -248,6 +253,81 @@ function renderFilters() {
   }
 }
 
+// ---- Sources (Phase 3) -------------------------------------------------------
+
+/** One chip per source in the summary line; set-up and warnings when opened. */
+function renderSources() {
+  const chips = $('sources-chips');
+  const body = $('sources-body');
+  chips.replaceChildren();
+  body.replaceChildren();
+  let problems = 0;
+
+  for (const source of state.sync) {
+    const run = source.lastRun;
+    let health = 'off';
+    let text = 'not set up';
+    if (source.configured && !run) { health = 'pending'; text = 'not synced yet'; }
+    if (run && run.ok) { health = run.warnings.length ? 'warn' : 'ok'; text = `${timeOf(run.at)} · ${run.summary}`; }
+    if (run && !run.ok) { health = 'error'; text = `failed ${timeOf(run.at)}`; }
+    if (health === 'error' || health === 'warn') problems++;
+
+    chips.append(el('span', { class: 'source-chip', 'data-health': health, title: text },
+      el('span', { class: 'dot' }), source.label));
+
+    const detail = el('div', { class: 'source-detail', 'data-health': health },
+      el('h3', {}, source.label, el('span', { class: 'source-state' }, text)),
+      el('p', { class: 'source-setup' }, source.setup));
+    if (run?.error) detail.append(el('p', { class: 'source-error' }, run.error));
+    if (run?.warnings.length) {
+      detail.append(el('ul', { class: 'source-warnings' }, ...run.warnings.slice(0, 5).map((w) => el('li', {}, w))));
+    }
+    body.append(detail);
+  }
+
+  body.append(el('p', { class: 'source-setup' },
+    'Claude and Gemini: ask the assistant to list what you agreed as a task block (one task per line, ' +
+    'with the conversation link on the first line), then paste it into the box above — or save it as a ' +
+    '.md file in the inbox folder. See README → Sources.'));
+
+  const button = el('button', { type: 'button', class: 'sync-now' }, state.syncing ? 'Syncing…' : 'Sync now');
+  if (state.syncing) button.setAttribute('disabled', '');
+  button.addEventListener('click', (event) => {
+    event.preventDefault(); // it sits inside <summary>: don't open/close the panel
+    event.stopPropagation();
+    syncNow();
+  });
+  chips.append(button);
+
+  // Problems open the panel so they're seen, rather than sitting behind a click.
+  if (problems > 0 && !$('sources').dataset.seen) {
+    /** @type {HTMLDetailsElement} */ ($('sources')).open = true;
+    $('sources').dataset.seen = 'yes';
+  }
+}
+
+async function syncNow() {
+  state.syncing = true;
+  renderSources();
+  try {
+    const before = state.open.length;
+    await api('POST', '/api/sync');
+    await refresh();
+    const added = state.open.length - before;
+    const failed = state.sync.filter((s) => s.lastRun && !s.lastRun.ok).map((s) => s.label);
+    showToast(failed.length
+      ? `Sync finished, but ${failed.join(' and ')} failed — see Sources.`
+      : `Synced. ${added > 0 ? `${added} more open task${added === 1 ? '' : 's'}.` : 'Nothing new.'}`, null);
+  } finally {
+    state.syncing = false;
+    renderSources();
+  }
+}
+
+function timeOf(iso) {
+  return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+}
+
 function renderList(tasks) {
   const list = $('list');
   list.replaceChildren(...tasks.map(taskRow));
@@ -276,6 +356,12 @@ function taskRow(task) {
   check.addEventListener('click', () => complete(task));
 
   const title = el('button', { type: 'button', class: 'title', title: 'Edit (e)' }, task.title);
+  if (task.mirror?.placeholderTitle) {
+    // Lunatask can't share names (they're encrypted). Make it obvious this
+    // one is waiting to be named, and how.
+    title.classList.add('is-placeholder');
+    title.setAttribute('title', 'Lunatask keeps names encrypted, so it can\'t send this one. Open it in Lunatask (o), then name it here (e).');
+  }
   title.addEventListener('click', () => toggleEdit(task.id));
 
   const meta = el('div', { class: 'meta' });
@@ -286,6 +372,8 @@ function taskRow(task) {
   if (due) meta.append(due);
   meta.append(sourceBadge(task.origin));
   for (const ref of task.alsoIn) meta.append(sourceBadge(ref, 'also in '));
+  // Phase 3: what the source system currently says about it.
+  if (task.mirror) meta.append(el('span', { class: 'mirror-detail', title: task.mirror.detail }, mirrorWords(task)));
   if (task.notes) meta.append(el('span', { class: 'notes-preview', title: task.notes }, task.notes));
 
   const body = el('div', { class: 'body' }, title, meta);
@@ -300,6 +388,12 @@ function taskRow(task) {
   li.addEventListener('mousedown', () => { state.selectedId = task.id; markSelected(); });
   if (state.editingId === task.id) li.append(editPanel(task));
   return li;
+}
+
+/** The mirror detail without repeating the source name the badge already shows. */
+function mirrorWords(task) {
+  const prefix = `${SOURCE_LABELS[task.origin.source]}: `;
+  return task.mirror.detail.startsWith(prefix) ? task.mirror.detail.slice(prefix.length) : task.mirror.detail;
 }
 
 function quadrantChip(placement) {
@@ -338,9 +432,25 @@ function formatDate(date, options) {
 function sourceBadge(ref, prefix = '') {
   const label = prefix + SOURCE_LABELS[ref.source];
   if (ref.url) {
-    return el('a', { class: 'badge', 'data-source': ref.source, href: ref.url, target: '_blank', rel: 'noopener noreferrer', title: `Open in ${SOURCE_LABELS[ref.source]}` }, `${label} ↗`);
+    const link = el('a', { class: 'badge', 'data-source': ref.source, href: ref.url, title: `Open in ${SOURCE_LABELS[ref.source]}` }, `${label} ↗`);
+    // Web links open in a new tab. App links (lunatask://) hand straight over
+    // to the app; a new tab would just be left blank.
+    if (isWebLink(ref.url)) {
+      link.setAttribute('target', '_blank');
+      link.setAttribute('rel', 'noopener noreferrer');
+    }
+    return link;
   }
   return el('span', { class: 'badge', 'data-source': ref.source }, label);
+}
+
+function isWebLink(url) {
+  return /^https?:\/\//i.test(url);
+}
+
+function openLink(url) {
+  if (isWebLink(url)) window.open(url, '_blank', 'noopener');
+  else location.href = url; // lunatask:// — the browser passes it to the app
 }
 
 function editPanel(task) {
@@ -368,6 +478,17 @@ function editPanel(task) {
     urgencyNote.textContent = 'Its due date is close, so it counts as urgent whatever you choose here.';
   }
 
+  const mirrorNote = el('p', { class: 'hint' });
+  if (task.mirror && task.origin.source === 'lunatask') {
+    mirrorNote.textContent = (task.mirror.placeholderTitle
+      ? 'Lunatask keeps task names encrypted, so it can\'t send this one\'s name. Open it in Lunatask, then type its name above — you only do this once. '
+      : '') +
+      'Kept in step with Lunatask: completing it there closes it here, and its scheduled date follows Lunatask. ' +
+      'Completing it here doesn\'t change Lunatask.';
+  } else if (task.mirror && task.origin.source === 'local') {
+    mirrorNote.textContent = `Found in ${task.mirror.detail}. Tick it or delete the line there and it closes here.`;
+  }
+
   const error = el('p', { class: 'error', role: 'alert' });
   const cancel = el('button', { type: 'button' }, 'Cancel');
   cancel.addEventListener('click', () => toggleEdit(null));
@@ -382,6 +503,7 @@ function editPanel(task) {
       el('label', {}, 'Urgent?', urgent),
       el('label', {}, 'Due', dueDate)),
     urgencyNote,
+    mirrorNote,
     error,
     el('div', { class: 'buttons' }, cancel, save),
   );
@@ -420,7 +542,8 @@ function editPanel(task) {
     if (event.key === 'Escape') toggleEdit(null);
   });
 
-  queueMicrotask(() => title.focus());
+  // A placeholder name is there to be replaced: select it so typing does that.
+  queueMicrotask(() => (task.mirror?.placeholderTitle ? title.select() : title.focus()));
   return form;
 }
 
@@ -501,7 +624,11 @@ const reopen = (task) => () => api('POST', `/api/tasks/${task.id}/reopen`);
 
 async function complete(task) {
   await api('POST', `/api/tasks/${task.id}/complete`);
-  showToast(`Done: ${task.title}`, reopen(task));
+  // Lunatask is mirrored read-only (DECISIONS.md D8), so say so at the
+  // moment it matters rather than let the two quietly disagree.
+  const elsewhere = task.origin.source === 'lunatask' && task.mirror?.openInSource
+    ? ' — tick it off in Lunatask too' : '';
+  showToast(`Done: ${task.title}${elsewhere}`, reopen(task));
   await refresh();
 }
 
@@ -581,8 +708,10 @@ let toastTimer;
 /** @type {(() => Promise<unknown>) | null} */
 let undoAction = null;
 
+/** `undo` may be null for messages that have nothing to undo. */
 function showToast(message, undo) {
   undoAction = undo;
+  $('toast-undo').hidden = !undo;
   $('toast-text').textContent = message;
   $('toast').hidden = false;
   clearTimeout(toastTimer);
@@ -606,6 +735,22 @@ $('capture').addEventListener('submit', async (event) => {
   await run(async () => {
     await api('POST', '/api/capture', { text: input.value });
     input.value = '';
+    await refresh();
+  }, $('capture-error'));
+});
+
+// 3.2 / 3.3: pasting several lines (say, a task list from a Claude or Gemini
+// conversation) adds them all at once instead of squashing them into one
+// title. Lines already here are skipped, so pasting twice is harmless.
+$('capture-input').addEventListener('paste', async (event) => {
+  const text = event.clipboardData?.getData('text') ?? '';
+  if (!/\r?\n\s*\S/.test(text.trim())) return; // one line: paste as normal
+  event.preventDefault();
+  await run(async () => {
+    const result = await api('POST', '/api/capture/block', { text });
+    const n = result.created.length;
+    const skipped = result.skipped ? ` (${result.skipped} already here)` : '';
+    showToast(n ? `Added ${n} task${n === 1 ? '' : 's'}${skipped}` : `Nothing new${skipped}`, null);
     await refresh();
   }, $('capture-error'));
 });
@@ -656,7 +801,7 @@ document.addEventListener('keydown', (event) => {
       break;
     case 'o': {
       const link = selected && [selected.origin, ...selected.alsoIn].find((r) => r.url);
-      if (link) window.open(link.url, '_blank', 'noopener');
+      if (link) openLink(link.url);
       break;
     }
     // 2.3: re-prioritise without touching the mouse.
@@ -718,6 +863,14 @@ for (const button of document.querySelectorAll('#view-switch button')) {
 
 // Re-fetch when you come back to the tab, in case the file changed via sync.
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+
+// Background syncs (every 15 minutes by default) change the list while the
+// page is open; look for that once a minute. Skipped while you're typing or
+// editing, so a redraw never eats what you've typed.
+setInterval(() => {
+  const typing = document.activeElement?.matches('input, textarea, select');
+  if (!document.hidden && !state.editingId && !typing && !state.syncing) refresh().catch(() => {});
+}, 60_000);
 
 refresh().catch((error) => {
   $('empty').hidden = false;

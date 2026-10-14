@@ -8,6 +8,7 @@
 //   GET   /api/tasks?view=open|closed      list tasks (open ones include `priority`)
 //   GET   /api/matrix                      open tasks grouped by Eisenhower quadrant
 //   POST  /api/capture      {text}         quick-add from one typed line
+//   POST  /api/capture/block {text}        add every task in a pasted block of lines
 //   POST  /api/tasks        {title, notes?, source?, url?, externalId?}
 //   PATCH /api/tasks/:id    {title?, notes?, source?, url?, ...}
 //   POST  /api/tasks/:id/complete
@@ -17,11 +18,14 @@
 //   POST  /api/tasks/:id/merge          {intoId}   fold this task into another
 //   POST  /api/tasks/:id/not-duplicate  {otherId}
 //   GET   /api/duplicates
+//   GET   /api/sync                        each source's set-up and last sync
+//   POST  /api/sync                        sync every source now
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
-import { parseCapture } from './capture.ts';
+import { parseCapture, parseCaptureBlock } from './capture.ts';
+import type { SyncRunner } from './sync-runner.ts';
 import { NotFoundError, TaskService, ValidationError, type NewTask } from './tasks.ts';
 
 const PUBLIC_DIR = join(import.meta.dirname, '..', 'public');
@@ -35,12 +39,13 @@ const CONTENT_TYPES: Record<string, string> = {
 
 type Handler = (request: IncomingMessage, response: ServerResponse) => Promise<void>;
 
-export function createApp(service: TaskService): Handler {
+/** `sync` is optional so tests that don't care about sources can leave it out. */
+export function createApp(service: TaskService, sync?: SyncRunner): Handler {
   return async (request, response) => {
     try {
       const url = new URL(request.url ?? '/', 'http://localhost');
       if (url.pathname.startsWith('/api/')) {
-        await handleApi(service, request, response, url);
+        await handleApi(service, sync, request, response, url);
       } else {
         await serveStatic(url.pathname, response);
       }
@@ -53,7 +58,13 @@ export function createApp(service: TaskService): Handler {
   };
 }
 
-async function handleApi(service: TaskService, request: IncomingMessage, response: ServerResponse, url: URL) {
+async function handleApi(
+  service: TaskService,
+  sync: SyncRunner | undefined,
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+) {
   const method = request.method ?? 'GET';
   const parts = url.pathname.split('/').filter(Boolean); // e.g. ['api', 'tasks', '<id>', 'merge']
   const [, resource, id, action] = parts;
@@ -68,7 +79,14 @@ async function handleApi(service: TaskService, request: IncomingMessage, respons
     if (method === 'POST') return sendJson(response, 201, await service.create((await readJson(request)) as NewTask));
   }
 
-  if (resource === 'capture' && method === 'POST') {
+  if (resource === 'capture' && id === 'block' && method === 'POST') {
+    const { text } = await readJson(request);
+    const lines = parseCaptureBlock(String(text ?? ''));
+    if (lines.length === 0) throw new ValidationError('No tasks found in that text');
+    return sendJson(response, 201, await service.captureMany(lines));
+  }
+
+  if (resource === 'capture' && !id && method === 'POST') {
     const { text } = await readJson(request);
     const parsed = parseCapture(String(text ?? ''));
     return sendJson(response, 201, await service.create(parsed));
@@ -79,6 +97,12 @@ async function handleApi(service: TaskService, request: IncomingMessage, respons
   if (resource === 'duplicates' && method === 'GET') {
     const pairs = await service.duplicates();
     return sendJson(response, 200, pairs.map((p) => ({ a: p.a, b: p.b, score: p.score })));
+  }
+
+  if (resource === 'sync' && !id) {
+    if (!sync) return sendJson(response, 200, []);
+    if (method === 'GET') return sendJson(response, 200, sync.statuses());
+    if (method === 'POST') return sendJson(response, 200, await sync.syncAll());
   }
 
   if (resource === 'tasks' && id && !action) {

@@ -99,3 +99,27 @@ test('open tasks in the list carry their priority', async () => {
   const open = (await call('GET', '/api/tasks')).body;
   assert.ok(open.every((t: { priority?: { placement: string } }) => typeof t.priority?.placement === 'string'));
 });
+
+test('3.2 — a pasted block adds every task once, even if pasted twice', async () => {
+  const text = '#gemini https://gemini.google.com/app/q1\n- Ring the bank due:2026-10-20\n- Renew the domain';
+  const first = await call('POST', '/api/capture/block', { text });
+  assert.equal(first.status, 201);
+  assert.equal(first.body.created.length, 2);
+  assert.equal(first.body.created[0].dueDate, '2026-10-20');
+  const again = await call('POST', '/api/capture/block', { text });
+  assert.deepEqual([again.body.created.length, again.body.skipped], [0, 2]);
+
+  const empty = await call('POST', '/api/capture/block', { text: '#claude\n' });
+  assert.equal(empty.status, 400);
+});
+
+test('Lunatask links are accepted as source links; javascript: links still are not', async () => {
+  const ok = await call('POST', '/api/tasks', { title: 'From Lunatask', url: 'lunatask://tasks/abc-123' });
+  assert.equal(ok.status, 201);
+  const bad = await call('POST', '/api/tasks', { title: 'Nope', url: 'javascript:alert(1)' });
+  assert.equal(bad.status, 400);
+});
+
+test('/api/sync answers even when no sync runner is wired in', async () => {
+  assert.deepEqual((await call('GET', '/api/sync')).body, []);
+});
