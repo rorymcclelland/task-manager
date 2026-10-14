@@ -1,0 +1,19 @@
+{
+  "name": "task-oversight",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One place to see and prioritise tasks that live across Claude, Gemini, Lunatask and the local machine.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.8.0"
+  }
+}
