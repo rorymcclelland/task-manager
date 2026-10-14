@@ -1,6 +1,6 @@
 # Task Management App — Backlog
 
-_Last updated: 14 October 2026 · Status: Phases 0–6 built; Phase 7 is the deferred list_
+_Last updated: 14 October 2026 · Status: Phases 0–6 built; Phase 7 (later, maybe) and Phase 8 (phone view) not started_
 
 Organised by **job to be done**, in phases. Each phase should be usable on its
 own — the aim is that the app earns its place from Phase 1, not after Phase 5.
@@ -291,7 +291,6 @@ length. `[hidden]` always hides._
 
 Explicitly deferred. Written down so they stop occupying thinking space.
 
-- Mobile or phone-friendly view.
 - Recurring tasks.
 - Projects or hierarchy above individual tasks.
 - Effort/time estimates and capacity planning.
@@ -315,6 +314,19 @@ Explicitly deferred. Written down so they stop occupying thinking space.
     protected, since the pane can change them (the Q1 same-origin rules
     apply).
 - **Not in scope at all:** notes, habits, mood tracking, contact tracking.
+
+---
+
+## Phase 8 — On my phone
+
+- **8.1 Phone view.** When I'm away from my PC, I want to see and update
+  my list from my phone, so the oversight doesn't stop at my desk.
+  _Today:_ the page already fits a phone's width (checked at 375px in
+  QA), but it only runs on the PC at `localhost`, so a phone can't reach
+  it, and drag-and-drop and keyboard shortcuts don't suit touch.
+  _Needs deciding first:_ how the phone reaches it (the app on the home
+  network, a tunnel, or hosting it somewhere), which undoes "local only"
+  (D1, D17), so it needs sign-in and a decision entry of its own.
 
 ---
 
