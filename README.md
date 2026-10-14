@@ -6,6 +6,8 @@ Gemini, Lunatask and my own machine. Single user, runs locally.
 - **Why it exists and what's in scope:** [`CONTEXT.md`](CONTEXT.md)
 - **What gets built, in what order:** [`BACKLOG.md`](BACKLOG.md)
 - **Why it's built the way it is:** [`docs/DECISIONS.md`](docs/DECISIONS.md)
+- **Full documentation** — setup, user guide, architecture, data model,
+  API, development, QA: [`docs/README.md`](docs/README.md)
 
 ## Running it
 

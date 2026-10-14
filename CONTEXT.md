@@ -59,7 +59,10 @@ list in a Day view, tasks slotted into it, the free time left, and an
 Ahead view of the next 14 days. Phase 5 keeps it believable: idle tasks
 are flagged, a one-card-at-a-time review clears what needs deciding, and
 a failed or stuck sync shows as a red banner.
-See `README.md` to run it.
+See `README.md` to run it, and `docs/README.md` for the full
+documentation. A full QA pass on 14 Oct 2026 found one high-severity
+issue (other websites could change tasks) and several smaller ones; the
+fixes are Phase 5Q in the backlog.
 
 ## Sync direction per source (backlog 3.5)
 
