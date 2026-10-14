@@ -49,7 +49,14 @@ export interface Task {
   /** Dates as plain YYYY-MM-DD strings: a due date is a calendar day, not an
    *  instant, so storing a time zone would only invite off-by-one bugs. */
   dueDate: string | null;
+  /** The day you mean to do it. Different from the due date: due is when it
+   *  must be done by, scheduled is when you've decided to do it. */
   scheduledDate: string | null;
+  /** Phase 4 (4.2): a time on the scheduled day, if it has one. Only
+   *  allowed while `scheduledDate` is set — a time with no day means
+   *  nothing. Missing on tasks saved before Phase 4, which reads the same
+   *  as null, so older task files still load unchanged. */
+  slot?: Slot | null;
 
   status: Status;
   /** Set only when status is "merged": the id of the task that absorbed this one. */
@@ -70,6 +77,19 @@ export interface Task {
   mirror?: MirrorInfo;
 }
 
+/**
+ * A time slot on the task's scheduled day (4.2).
+ *
+ * `start` is a wall-clock time, "HH:MM" in 24-hour form, for the same reason
+ * dates are plain strings: "14:00 on Thursday" means 14:00 wherever this
+ * computer happens to be, not an instant in some time zone.
+ */
+export interface Slot {
+  start: string;
+  /** How long it's blocked out for, in minutes. */
+  minutes: number;
+}
+
 /** What a sync knows about a task it's mirroring from another system. */
 export interface MirrorInfo {
   /** What the other system last said about it, in words — e.g.
@@ -82,6 +102,11 @@ export interface MirrorInfo {
   /** True while the title is a stand-in because the other system wouldn't
    *  give us one (Lunatask encrypts names). Cleared when you rename it. */
   placeholderTitle: boolean;
+  /** The scheduled date the other system gave at the last sync. A sync only
+   *  copies the source's scheduled date over yours when this changes — so a
+   *  date (or time slot) you set here survives until the source itself
+   *  moves the task. Missing on tasks synced before Phase 4. See D12. */
+  sourceScheduledDate?: string | null;
 }
 
 export function isSource(value: unknown): value is Source {
@@ -95,4 +120,22 @@ export function isStatus(value: unknown): value is Status {
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 export function isDateString(value: unknown): value is string {
   return typeof value === 'string' && DATE_PATTERN.test(value);
+}
+
+/** "HH:MM", 24-hour, 00:00–23:59. */
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+export function isTimeString(value: unknown): value is string {
+  return typeof value === 'string' && TIME_PATTERN.test(value);
+}
+
+/** Minutes since midnight for an "HH:MM" time. */
+export function minutesOf(time: string): number {
+  return Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+}
+
+/** "HH:MM" for a number of minutes since midnight. */
+export function timeOf(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }

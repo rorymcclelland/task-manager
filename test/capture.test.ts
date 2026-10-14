@@ -9,6 +9,8 @@ test('plain text becomes a manual task', () => {
     url: null,
     placement: 'untriaged',
     dueDate: null,
+    scheduledDate: null,
+    slot: null,
   });
 });
 
@@ -19,6 +21,8 @@ test('a source tag sets the source and is removed from the title', () => {
     url: null,
     placement: 'untriaged',
     dueDate: null,
+    scheduledDate: null,
+    slot: null,
   });
 });
 
@@ -41,6 +45,8 @@ test('unknown hashtags stay in the title', () => {
     url: null,
     placement: 'untriaged',
     dueDate: null,
+    scheduledDate: null,
+    slot: null,
   });
   assert.equal(parseCapture('Plan #offsite agenda').title, 'Plan #offsite agenda');
 });
@@ -110,4 +116,33 @@ test('a header link alone is enough to set the source for the block', () => {
 
 test('a block with no task lines gives nothing', () => {
   assert.deepEqual(parseCaptureBlock('#claude\n\n- [x] done'), []);
+});
+
+// ---- Phase 4: on: and at: ------------------------------------------------------
+
+test('4.2 — on: schedules a day, at: adds a 30-minute slot', () => {
+  const result = parseCapture('Call the bank on:2026-10-16 at:9:30', '2026-10-14');
+  assert.equal(result.title, 'Call the bank');
+  assert.equal(result.scheduledDate, '2026-10-16');
+  assert.deepEqual(result.slot, { start: '09:30', minutes: 30 });
+});
+
+test('4.2 — at: with no on: means today; with no today known, no slot', () => {
+  assert.equal(parseCapture('Ring Mum at:18:00', '2026-10-14').scheduledDate, '2026-10-14');
+  assert.deepEqual(parseCapture('Ring Mum at:18:00').slot, null);
+  assert.equal(parseCapture('Ring Mum at:18:00').title, 'Ring Mum');
+});
+
+test('4.2 — nonsense times and dates stay in the title', () => {
+  const result = parseCapture('Meet at:25:00 on:next-week', '2026-10-14');
+  assert.equal(result.title, 'Meet at:25:00 on:next-week');
+  assert.equal(result.slot, null);
+});
+
+test('4.2 — a block header can set the day for every line', () => {
+  const [a, b] = parseCaptureBlock('#claude on:2026-10-20\n- Draft the deck at:10:00\n- Book the room', '2026-10-14');
+  assert.equal(a.scheduledDate, '2026-10-20');
+  assert.deepEqual(a.slot, { start: '10:00', minutes: 30 });
+  assert.equal(b.scheduledDate, '2026-10-20');
+  assert.equal(b.slot, null);
 });

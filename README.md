@@ -30,6 +30,8 @@ folder (copy `.env.example`) or set them before `npm start`:
 | `LOCAL_FOLDERS` | — | Folders to scan for `- [ ]` and `TODO:` lines, separated by `;` |
 | `INBOX_FOLDER` | `data/inbox` | Where dropped-in task files are picked up |
 | `SYNC_EVERY_MINUTES` | `15` | How often to sync; `0` = only on "Sync now" |
+| `CALENDAR_URLS` | — | Your calendar's private iCal (.ics) address, or an .ics file; several separated by `;` (see Calendar) |
+| `DAY_HOURS` | `09:00-18:00` | Your working day: free time in the Day view is counted inside it |
 
 ```
 # PowerShell
@@ -45,7 +47,9 @@ npm run sample
 Writes about 30 made-up tasks to `data/sample-tasks.json` and starts the app
 on that file instead of your real one. It also makes a sample notes folder
 and leaves a file in a sample inbox, so the first sync has something to
-pick up; it never syncs your real Lunatask, notes or inbox. Due dates are set relative to today,
+pick up, plus a sample calendar with meetings this week and tasks slotted
+into today and tomorrow; it never syncs your real Lunatask, notes, inbox or
+calendar. Due dates are set relative to today,
 so there's always something overdue, something due today and an overfull
 "Do now"; there are also two likely duplicates to merge and some closed
 tasks to reopen. Run it again to reset. The source links are made up, so
@@ -66,6 +70,8 @@ line:
 | `#claude` `#gemini` `#lunatask` `#local` | Records where the task came from |
 | `!1` `!2` `!3` `!4` | Places it: Do now, Schedule, Delegate, Drop/defer |
 | `due:2026-10-31` | Sets a due date |
+| `on:2026-10-20` | Plans it for that day |
+| `at:14:00` | Gives it a 30-minute slot at that time (today, unless there's an `on:`) |
 | a pasted `https://…` link | Becomes a link back to it in that system — a `claude.ai` or Gemini link also sets the source |
 
 So `Send Sarah the budget #claude !1 https://claude.ai/chat/abc` adds a task
@@ -86,7 +92,10 @@ number. Set a due date in the edit panel (`e`).
 | `x` / `d` | done / drop |
 | `e` | edit |
 | `o` | open the source link |
-| `v` | matrix ↔ list |
+| `s` | schedule: in the Day view, the next free slot; elsewhere, opens the edit panel |
+| `[` / `]` | Day view: the day before / after |
+| `t` | Day view, today |
+| `v` | next view: Matrix → Day → Ahead → List |
 | `Esc` | leave a text box |
 
 **Due dates move tasks for you.** Anything due within 3 days, or overdue,
@@ -95,6 +104,26 @@ counts as urgent whatever you said, so it rises into "Do now" (or
 that's what's making it urgent.
 
 **Too much in "Do now"?** Over 5 tasks, the quadrant turns red and says so.
+
+### Day and Ahead (planning your time)
+
+**Day** puts the day's calendar beside your list. The left side is a
+timeline of your meetings; the right side is everything still to fit in,
+Do now first. **Drag a task onto the timeline** to give it a time (it snaps
+to 15 minutes and takes 30 unless you change it in the edit panel). Drag it
+onto *Some time this day* to plan the day without a time, or back to the
+right to unplan it. Select a task and press `s` to drop it into the first
+free gap. The header shows how much free time is left in your working day
+(`DAY_HOURS`), from now if it's today. Events marked "free" in your
+calendar, like lunch, are drawn dashed and don't count as busy. `[` and `]`
+move between days.
+
+**Ahead** shows the next 14 days: what's overdue, anything you planned for
+an earlier day and haven't done, then each day's events, slotted tasks,
+planned tasks and deadlines, then the next few deadlines after that. Click
+a day to open it in Day.
+
+In the matrix and list, a planned task shows *▸ Planned Thu 14:00*.
 
 Completing, dropping and merging all show an **Undo** for a few seconds, and
 anything closed can be reopened from "Done, dropped and merged" at the bottom.
@@ -144,6 +173,40 @@ https://claude.ai/chat/abc123
 (code files are ignored). Tick the box or delete the line and the task
 closes here at the next sync.
 
+## Calendar
+
+Lunatask's API doesn't include the calendar, so the app reads your calendar
+straight from its **private iCal address**. That's a link that lets
+read-only apps see your calendar. It's read-only: nothing is ever added to
+your calendar, and events are never stored as tasks.
+
+- **Google Calendar:** on the web, Settings → (your calendar, under
+  "Settings for my calendars") → Integrate calendar → **Secret address in
+  iCal format**.
+- **Outlook / Microsoft 365:** on the web, Settings → Calendar → Shared
+  calendars → **Publish a calendar** → choose "Can view all details" →
+  copy the **ICS** link. (Some work accounts have this turned off by IT;
+  if the option isn't there, that's why.)
+- **iCloud:** in the Calendar app, share the calendar as a **Public
+  Calendar** and copy the link (it starts `webcal://`, which is fine).
+
+Put it in `.env` and restart. Several calendars go on one line, separated
+by `;`:
+
+```
+CALENDAR_URLS=https://calendar.google.com/calendar/ical/…/basic.ics
+```
+
+**Treat that address like a password:** anyone with it can read your
+calendar. `.env` never goes to GitHub, and the app never shows the address
+on the page. If it leaks, reset it in the calendar's settings and paste the
+new one in.
+
+Calendars update with the other sources (every 15 minutes, or *Sync now*),
+but providers refresh the address on their own schedule, so a meeting added
+a minute ago may take a while to appear. If a calendar can't be fetched,
+the last good copy stays on screen and *Sources* says so.
+
 ## Developing
 
 ```
@@ -160,7 +223,9 @@ npm run typecheck
 | `src/capture.ts` | Parsing the one-line quick-add |
 | `src/duplicates.ts` | How likely duplicates are spotted |
 | `src/sync.ts` | Phase 3: the rules for mirroring another system's tasks |
-| `src/sources/` | One file per source: Lunatask, local files, inbox folder |
+| `src/agenda.ts` | Phase 4: tasks and events laid out by day, and free time |
+| `src/calendar/` | Phase 4: reading .ics calendars (`ics.ts`) and time zones (`zones.ts`) |
+| `src/sources/` | One file per source: Lunatask, local files, inbox folder, calendar |
 | `src/sync-runner.ts` | Runs the sources, on a timer and on "Sync now" |
 | `src/store/` | Storage interface + the JSON file implementation |
 | `src/app.ts` | HTTP routes (the API is listed at the top of the file) |

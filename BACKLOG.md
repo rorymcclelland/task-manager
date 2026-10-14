@@ -1,6 +1,6 @@
 # Task Management App — Backlog
 
-_Last updated: 14 October 2026 · Status: Phases 0–3 built; Phase 4 next_
+_Last updated: 14 October 2026 · Status: Phases 0–4 built; Phase 5 next_
 
 Organised by **job to be done**, in phases. Each phase should be usable on its
 own — the aim is that the app earns its place from Phase 1, not after Phase 5.
@@ -89,7 +89,7 @@ sample export to build against); write completion back to Lunatask._
 
 ---
 
-## Phase 4 — Time
+## Phase 4 — Time ✅
 
 - **4.1** When planning a day, I want to see my calendar alongside the list, so
   priorities meet the time actually available.
@@ -98,6 +98,17 @@ sample export to build against); write completion back to Lunatask._
 - **4.3** When I look ahead, I want to see what is due and when, so nothing
   arrives as a surprise.
 
+_Built as: your calendar read from its private .ics address (D11). Lunatask
+has no calendar API. Tasks get a day plus an optional time slot, set by
+dragging in the new Day view, `s` for the next free gap, the edit panel,
+or `on:`/`at:` in capture (D12). Lunatask's date now only overrules yours
+when Lunatask changes it. Day shows the timeline beside the list and the
+free time left; Ahead shows 14 days, plus overdue and "planned for an
+earlier day" (D13)._
+
+_Possible follow-ups: write slots back to the calendar as events; a week
+grid; free time that knows weekends from weekdays._
+
 ---
 
 ## Phase 5 — Keeping it honest
@@ -105,7 +116,8 @@ sample export to build against); write completion back to Lunatask._
 The maintenance jobs that decide whether the system survives month two.
 
 - **5.1** When tasks go stale, I want them flagged, so the list does not quietly
-  fill with things I will never do.
+  fill with things I will never do. _(A start: Ahead already lists tasks
+  planned for a day that's gone and still open.)_
 - **5.2** When I sit down to review, I want a review flow — triage, re-prioritise,
   drop — so the review is a few minutes rather than an afternoon.
 - **5.3** When a sync fails, I want to know, so I never trust a list that has

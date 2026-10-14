@@ -123,3 +123,18 @@ test('Lunatask links are accepted as source links; javascript: links still are n
 test('/api/sync answers even when no sync runner is wired in', async () => {
   assert.deepEqual((await call('GET', '/api/sync')).body, []);
 });
+
+test('4.1–4.3 — /api/agenda lays tasks out by day; PATCH schedules a slot', async () => {
+  const created = (await call('POST', '/api/tasks', { title: 'Plan the week' })).body;
+  const patched = await call('PATCH', `/api/tasks/${created.id}`, { scheduledDate: '2026-10-20', slot: { start: '10:00', minutes: 45 } });
+  assert.equal(patched.status, 200);
+  assert.deepEqual(patched.body.slot, { start: '10:00', minutes: 45 });
+
+  const agenda = (await call('GET', '/api/agenda?from=2026-10-19&days=3')).body;
+  assert.deepEqual(agenda.days.map((d: { date: string }) => d.date), ['2026-10-19', '2026-10-20', '2026-10-21']);
+  assert.ok(agenda.days[1].slotted.some((t: { id: string }) => t.id === created.id));
+  assert.deepEqual(agenda.calendars, []);
+
+  assert.equal((await call('GET', '/api/agenda?from=tomorrow')).status, 400);
+  assert.equal((await call('GET', '/api/agenda?days=500')).status, 400);
+});

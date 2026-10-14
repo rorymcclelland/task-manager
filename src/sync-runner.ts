@@ -8,6 +8,7 @@
 // keeping it out of tasks.json means the file isn't rewritten just to say
 // "still nothing new".
 
+import type { Calendars } from './sources/calendar.ts';
 import { fileOfLocalId, scanLocalFolders } from './sources/local-files.ts';
 import { fetchLunataskItems } from './sources/lunatask.ts';
 import { processInbox } from './sources/inbox.ts';
@@ -17,9 +18,11 @@ export interface SyncConfig {
   lunatask: { token: string | null; fetchFn?: typeof fetch };
   local: { folders: string[] };
   inbox: { folder: string };
+  /** Phase 4: optional so tests that don't care about it can leave it out. */
+  calendar?: Calendars;
 }
 
-export type ConnectorId = 'lunatask' | 'local' | 'inbox';
+export type ConnectorId = 'lunatask' | 'local' | 'inbox' | 'calendar';
 
 export interface ConnectorStatus {
   id: ConnectorId;
@@ -110,6 +113,15 @@ export class SyncRunner {
               (result.skipped ? ` · ${result.skipped} already here` : '');
           return { summary, warnings: result.problems };
         },
+      },
+      {
+        id: 'calendar',
+        label: 'Calendar',
+        configured: !!config.calendar?.configured,
+        setup: config.calendar?.configured
+          ? 'Reads your calendar (read-only) for the Day and Ahead views. Events are never added as tasks.'
+          : 'Not set up. Copy your calendar\'s private iCal (.ics) address and add CALENDAR_URLS=… to .env, then restart. See README → Calendar.',
+        run: () => config.calendar!.refresh(),
       },
     ];
   }

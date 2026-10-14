@@ -13,8 +13,9 @@
 //   title. Renaming a task here doesn't break the link.
 // - New items are only imported while open. A sync never fills the list with
 //   things that were finished before this app saw them.
-// - What the other system says about scheduling is copied over each time.
-//   Its Eisenhower answers are only used while you haven't placed the task
+// - The other system's scheduled date is copied over when *it* changes —
+//   not every sync — so a day or time slot you set here survives until the
+//   source moves the task itself (D12). Its Eisenhower answers are only used while you haven't placed the task
 //   here — once you have, your answer wins.
 // - A task is closed here when the other system closes it (or it disappears
 //   from there) — but only on the change. If you reopen it here, the next
@@ -150,13 +151,19 @@ function newTask(source: Source, item: SourceItem, now: string, id: string): Tas
     urgent: item.urgent ?? null,
     dueDate: null,
     scheduledDate: item.scheduledDate ?? null,
+    slot: null,
     status: 'open',
     mergedInto: null,
     notDuplicateOf: [],
     createdAt: now,
     updatedAt: now,
     closedAt: null,
-    mirror: { detail: item.detail, openInSource: true, placeholderTitle: item.title === null },
+    mirror: {
+      detail: item.detail,
+      openInSource: true,
+      placeholderTitle: item.title === null,
+      ...(item.scheduledDate !== undefined ? { sourceScheduledDate: item.scheduledDate } : {}),
+    },
   };
 }
 
@@ -169,6 +176,13 @@ function updatedTask(task: Task, item: SourceItem, now: string): Task {
     openInSource: item.open,
     placeholderTitle: task.mirror?.placeholderTitle ?? false,
   };
+  // What the source said about scheduling last time. Tasks synced before
+  // Phase 4 didn't record it, but back then the date always followed the
+  // source, so the task's own date is what it last said.
+  const lastSaid = task.mirror?.sourceScheduledDate !== undefined ? task.mirror.sourceScheduledDate : task.scheduledDate;
+  if (item.scheduledDate !== undefined) mirror.sourceScheduledDate = item.scheduledDate;
+  else if (task.mirror?.sourceScheduledDate !== undefined) mirror.sourceScheduledDate = task.mirror.sourceScheduledDate;
+
   let next: Task = { ...task, origin: { ...task.origin }, mirror };
   let differs = !sameMirror(task.mirror, mirror);
 
@@ -176,8 +190,11 @@ function updatedTask(task: Task, item: SourceItem, now: string): Task {
     next.origin.url = item.url;
     differs = true;
   }
-  if (item.scheduledDate !== undefined && item.scheduledDate !== task.scheduledDate) {
+  // The source moved it (D12): take its date. A time slot belonged to the
+  // old day, so it goes too — rather than silently land on the new one.
+  if (item.scheduledDate !== undefined && item.scheduledDate !== lastSaid && item.scheduledDate !== task.scheduledDate) {
     next.scheduledDate = item.scheduledDate;
+    next.slot = null;
     differs = true;
   }
   // The source's Eisenhower answers only fill a gap; they never overrule you.
@@ -202,5 +219,11 @@ function closeIfOpen(task: Task, status: 'done' | 'dropped', now: string): Task 
 }
 
 function sameMirror(a: MirrorInfo | undefined, b: MirrorInfo): boolean {
-  return !!a && a.detail === b.detail && a.openInSource === b.openInSource && a.placeholderTitle === b.placeholderTitle;
+  return (
+    !!a &&
+    a.detail === b.detail &&
+    a.openInSource === b.openInSource &&
+    a.placeholderTitle === b.placeholderTitle &&
+    a.sourceScheduledDate === b.sourceScheduledDate
+  );
 }

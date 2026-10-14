@@ -30,6 +30,15 @@ const QUADRANTS = /** @type {const} */ ({
   untriaged: { label: 'Not placed yet', hint: 'Drag onto the matrix, or select and press 1–4', key: '0' },
 });
 
+/** @typedef {'matrix'|'day'|'ahead'|'list'} View */
+/** The order `v` cycles through, matching the buttons. */
+const VIEWS = /** @type {View[]} */ (['matrix', 'day', 'ahead', 'list']);
+
+function viewFromHash() {
+  const view = location.hash.slice(1);
+  return /** @type {View} */ (VIEWS.includes(/** @type {View} */ (view)) && view !== 'matrix' ? view : 'matrix');
+}
+
 const state = {
   open: /** @type {any[]} */ ([]),
   closed: /** @type {any[]} */ ([]),
@@ -38,8 +47,14 @@ const state = {
   sync: /** @type {any[]} */ ([]),
   syncing: false,
   /** @type {any} */ matrix: null,
-  /** The matrix is the default view (2.2); #list in the address shows the plain list. */
-  /** @type {'matrix' | 'list'} */ view: location.hash === '#list' ? 'list' : 'matrix',
+  /** Phase 4: the day shown in the Day view, and the next 14 days for Ahead
+   *  (both from /api/agenda). */
+  /** @type {any} */ dayAgenda: null,
+  /** @type {any} */ ahead: null,
+  /** @type {string | null} */ day: null,
+  /** The matrix is the default view (2.2); #list, #day or #ahead in the
+   *  address opens another. */
+  /** @type {View} */ view: viewFromHash(),
   /** @type {Source | 'all'} */ filter: 'all',
   /** @type {string | null} */ selectedId: null,
   /** @type {string | null} */ editingId: null,
@@ -62,14 +77,17 @@ async function api(method, path, body) {
 }
 
 async function refresh() {
-  const [open, closed, duplicates, matrix, sync] = await Promise.all([
+  const [open, closed, duplicates, matrix, sync, dayAgenda, ahead] = await Promise.all([
     api('GET', '/api/tasks?view=open'),
     api('GET', '/api/tasks?view=closed'),
     api('GET', '/api/duplicates'),
     api('GET', '/api/matrix'),
     api('GET', '/api/sync'),
+    api('GET', `/api/agenda?days=1${state.day ? `&from=${state.day}` : ''}`),
+    api('GET', '/api/agenda?days=14'),
   ]);
-  Object.assign(state, { open, closed, duplicates, matrix, sync });
+  Object.assign(state, { open, closed, duplicates, matrix, sync, dayAgenda, ahead });
+  state.day = dayAgenda.from;
 
   // 2.2: on first load, put the cursor on the top task in "Do now", so the
   // answer to "what now?" is already highlighted.
@@ -98,16 +116,13 @@ function render() {
   renderSources();
   renderDuplicates();
 
-  const matrixView = state.view === 'matrix';
-  $('matrix').hidden = !matrixView;
-  $('list').hidden = matrixView;
-  document.querySelector('.page')?.classList.toggle('is-wide', matrixView);
-  if (matrixView) {
-    renderMatrix();
-    $('empty').hidden = true;
-  } else {
-    renderList(visible);
-  }
+  for (const view of VIEWS) $(view).hidden = state.view !== view;
+  document.querySelector('.page')?.classList.toggle('is-wide', state.view === 'matrix' || state.view === 'day');
+  $('empty').hidden = true;
+  if (state.view === 'matrix') renderMatrix();
+  if (state.view === 'day') renderDay();
+  if (state.view === 'ahead') renderAhead();
+  if (state.view === 'list') renderList(visible);
   renderClosed();
 }
 
@@ -115,6 +130,13 @@ function render() {
  *  on screen — so j/k always move to the task you'd expect. A merged task
  *  counts for every system it lives in, not just where it started. */
 function visibleTasks() {
+  if (state.view === 'day' || state.view === 'ahead') {
+    // These views show a task in several places (a task can be due one day
+    // and planned for another), so j/k visit each one once, top to bottom.
+    const byId = new Map(state.open.map((t) => [t.id, t]));
+    const ids = (state.view === 'day' ? dayOrder() : aheadOrder()).map((t) => t.id);
+    return [...new Set(ids)].map((id) => byId.get(id)).filter(Boolean).filter(passesFilter);
+  }
   const all = state.view === 'matrix' && state.matrix
     ? Object.keys(QUADRANTS).flatMap((id) => quadrant(id)?.tasks ?? [])
     : state.open;
@@ -133,7 +155,7 @@ function renderViewSwitch() {
 
 function setView(view) {
   state.view = view;
-  history.replaceState(null, '', view === 'list' ? '#list' : location.pathname);
+  history.replaceState(null, '', view === 'matrix' ? location.pathname : `#${view}`);
   render();
 }
 
@@ -342,7 +364,7 @@ function renderList(tasks) {
 function taskRow(task) {
   const li = el('li', { class: 'task', 'data-id': task.id });
   if (task.id === state.selectedId) li.classList.add('is-selected');
-  if (state.view === 'matrix' && state.editingId !== task.id) {
+  if ((state.view === 'matrix' || state.view === 'day') && state.editingId !== task.id) {
     li.setAttribute('draggable', 'true');
     li.addEventListener('dragstart', (event) => {
       event.dataTransfer?.setData('application/x-task-id', task.id);
@@ -370,6 +392,9 @@ function taskRow(task) {
   if (state.view === 'list' && task.priority) meta.append(quadrantChip(task.priority.placement));
   const due = dueChip(task);
   if (due) meta.append(due);
+  // 4.2: when it's scheduled. Left out in Day/Ahead, where where it sits says so.
+  const scheduled = state.view === 'matrix' || state.view === 'list' ? scheduledChip(task) : null;
+  if (scheduled) meta.append(scheduled);
   meta.append(sourceBadge(task.origin));
   for (const ref of task.alsoIn) meta.append(sourceBadge(ref, 'also in '));
   // Phase 3: what the source system currently says about it.
@@ -473,6 +498,17 @@ function editPanel(task) {
   const important = triStateSelect('important', task.important);
   const urgent = triStateSelect('urgent', task.urgent);
   const dueDate = el('input', { name: 'dueDate', type: 'date', value: task.dueDate ?? '' });
+  // 4.2: when you mean to do it — a day, and optionally a time and length.
+  const scheduledDate = el('input', { name: 'scheduledDate', type: 'date', value: task.scheduledDate ?? '' });
+  const slotStart = el('input', { name: 'slotStart', type: 'time', step: '300', value: task.slot?.start ?? '' });
+  const slotMinutes = el('select', { name: 'slotMinutes' });
+  const lengths = [15, 30, 45, 60, 90, 120, 180, 240];
+  if (task.slot && !lengths.includes(task.slot.minutes)) lengths.push(task.slot.minutes);
+  for (const m of lengths.sort((a, b) => a - b)) {
+    const option = el('option', { value: String(m) }, duration(m));
+    if (m === (task.slot?.minutes ?? DEFAULT_MINUTES)) option.setAttribute('selected', '');
+    slotMinutes.append(option);
+  }
   const urgencyNote = el('p', { class: 'hint' });
   if (task.priority?.urgencyReason === 'due-soon') {
     urgencyNote.textContent = 'Its due date is close, so it counts as urgent whatever you choose here.';
@@ -483,7 +519,7 @@ function editPanel(task) {
     mirrorNote.textContent = (task.mirror.placeholderTitle
       ? 'Lunatask keeps task names encrypted, so it can\'t send this one\'s name. Open it in Lunatask, then type its name above — you only do this once. '
       : '') +
-      'Kept in step with Lunatask: completing it there closes it here, and its scheduled date follows Lunatask. ' +
+      'Kept in step with Lunatask: completing it there closes it here, and if Lunatask moves its scheduled date, that wins. ' +
       'Completing it here doesn\'t change Lunatask.';
   } else if (task.mirror && task.origin.source === 'local') {
     mirrorNote.textContent = `Found in ${task.mirror.detail}. Tick it or delete the line there and it closes here.`;
@@ -503,6 +539,10 @@ function editPanel(task) {
       el('label', {}, 'Urgent?', urgent),
       el('label', {}, 'Due', dueDate)),
     urgencyNote,
+    el('div', { class: 'row row--3' },
+      el('label', {}, 'Planned for', scheduledDate),
+      el('label', {}, 'At (optional)', slotStart),
+      el('label', {}, 'For', slotMinutes)),
     mirrorNote,
     error,
     el('div', { class: 'buttons' }, cancel, save),
@@ -533,6 +573,8 @@ function editPanel(task) {
         important: fromTriState(important.value),
         urgent: fromTriState(urgent.value),
         dueDate: dueDate.value || null,
+        scheduledDate: scheduledDate.value || null,
+        slot: scheduledDate.value && slotStart.value ? { start: slotStart.value.slice(0, 5), minutes: Number(slotMinutes.value) } : null,
       });
       state.editingId = null;
       await refresh();
@@ -618,6 +660,471 @@ function renderClosed() {
   $('closed').querySelector('summary').textContent = `Done, dropped and merged (${state.closed.length})`;
 }
 
+// ---- Time: the Day view (4.1, 4.2) --------------------------------------------
+//
+// Left: the day's calendar as a timeline, with tasks that have a time slot
+// drawn on it in their quadrant's colour. Right: the open tasks still to fit
+// in, in matrix order. Drag a task onto the timeline to give it a slot;
+// drag it to "Some time this day" to schedule the day without a time.
+
+/** Pixels per hour on the timeline. */
+const HOUR_PX = 48;
+/** Drops snap to this many minutes. */
+const SNAP = 15;
+/** A new slot's length, unless the task already has one. */
+const DEFAULT_MINUTES = 30;
+
+function renderDay() {
+  const container = $('day');
+  const agenda = state.dayAgenda;
+  if (!agenda) return;
+  const day = agenda.days[0];
+
+  // Header: which day, how to move between days, and how much time is left.
+  const prev = el('button', { type: 'button', title: 'Day before ([)', 'aria-label': 'Day before' }, '‹');
+  prev.addEventListener('click', () => shiftDay(-1));
+  const next = el('button', { type: 'button', title: 'Day after (])', 'aria-label': 'Day after' }, '›');
+  next.addEventListener('click', () => shiftDay(1));
+  const today = el('button', { type: 'button', title: 'Today (t)' }, 'Today');
+  today.addEventListener('click', () => goToDay(state.ahead?.today ?? null));
+  if (day.isToday) today.setAttribute('disabled', '');
+
+  const header = el('header', { class: 'day-header' },
+    el('div', { class: 'day-nav' }, prev, el('h2', {}, dayName(day.date, agenda.today, true)), next, today),
+    el('p', { class: 'free' }, freeWords(day, agenda)));
+
+  const notes = [];
+  if (!agenda.calendars.length) {
+    notes.push(el('p', { class: 'day-note' }, 'No calendar connected yet, so only scheduled tasks are shown. Add your calendar\'s private iCal address as CALENDAR_URLS in .env — see README → Calendar.'));
+  }
+  if (agenda.unsupportedRules) {
+    notes.push(el('p', { class: 'day-note' }, `${agenda.unsupportedRules} repeating event${agenda.unsupportedRules === 1 ? ' uses' : 's use'} a repeat rule this app can't read, so only the first time is shown.`));
+  }
+
+  // A task on the timeline has no row to open its edit panel under, so it opens here.
+  const editing = day.slotted.find((t) => t.id === state.editingId);
+  if (editing) notes.push(el('div', { class: 'block-edit' }, el('h3', {}, editing.title), editPanel(editing)));
+
+  container.replaceChildren(header, ...notes, el('div', { class: 'day-grid' }, dayPlan(day, agenda), toFitIn(day)));
+  scrollTimelineOnce(day, agenda);
+}
+
+/** Tasks in the order the Day view draws them. */
+function dayOrder() {
+  const day = state.dayAgenda?.days[0];
+  if (!day) return [];
+  const onThisDay = new Set([...day.slotted, ...day.scheduled].map((t) => t.id));
+  const fitIn = ['do', 'schedule', 'delegate', 'untriaged', 'eliminate'].flatMap((id) => (quadrant(id)?.tasks ?? []).filter((t) => !onThisDay.has(t.id)));
+  return [...day.scheduled, ...day.due, ...day.slotted, ...fitIn];
+}
+
+/** Tasks in the order the Ahead view draws them. */
+function aheadOrder() {
+  const a = state.ahead;
+  if (!a) return [];
+  return [...a.overdue, ...a.missed, ...a.days.flatMap((d) => [...d.slotted, ...d.scheduled, ...d.due]), ...a.dueLater];
+}
+
+/** The left column: all-day events, "some time this day", due, then the timeline. */
+function dayPlan(day, agenda) {
+  const column = el('section', { class: 'day-plan', 'aria-label': 'Calendar' });
+
+  const allDay = day.events.filter((e) => e.allDay);
+  if (allDay.length) {
+    column.append(el('ul', { class: 'all-day' }, ...allDay.map((e) =>
+      el('li', { class: 'event-chip', 'data-busy': String(e.busy), title: eventTitle(e) }, e.title))));
+  }
+
+  // 4.2: scheduled for the day with no time — also a drop target.
+  const loose = el('div', { class: 'loose' }, el('h3', {}, 'Some time this day'));
+  if (day.scheduled.length) loose.append(el('ul', { class: 'list' }, ...day.scheduled.filter(passesFilter).map(taskRow)));
+  else loose.append(el('p', { class: 'q-empty' }, 'Drop a task here to plan it for this day without a time.'));
+  makeScheduleTarget(loose, () => ({ slot: null }));
+  column.append(loose);
+
+  if (day.due.length) {
+    column.append(el('div', { class: 'loose loose--due' }, el('h3', {}, 'Due this day'),
+      el('ul', { class: 'list' }, ...day.due.filter(passesFilter).map(taskRow))));
+  }
+
+  column.append(timeline(day, agenda));
+  return column;
+}
+
+/** The hour-by-hour timeline for one day. */
+function timeline(day, agenda) {
+  const timed = day.events.filter((e) => !e.allDay);
+  const workStart = minutes(agenda.dayHours.start);
+  const workEnd = minutes(agenda.dayHours.end);
+  // Show at least 07:00–20:00 and the working day, stretched to fit anything on it.
+  const starts = [7 * 60, workStart, ...timed.map((e) => minutes(e.start)), ...day.slotted.map((t) => minutes(t.slot.start))];
+  const ends = [20 * 60, workEnd, ...timed.map((e) => minutes(e.end)), ...day.slotted.map((t) => minutes(t.slot.start) + t.slot.minutes)];
+  const first = Math.floor(Math.min(...starts) / 60);
+  const last = Math.min(24, Math.ceil(Math.max(...ends) / 60));
+  const y = (m) => ((m - first * 60) * HOUR_PX) / 60;
+
+  const grid = el('div', { class: 'timeline', style: `height:${(last - first) * HOUR_PX}px` });
+  grid.dataset.first = String(first);
+
+  // Outside working hours is shaded, so free time reads at a glance.
+  grid.append(el('div', { class: 'off-hours', style: `top:0;height:${Math.max(0, y(workStart))}px` }));
+  grid.append(el('div', { class: 'off-hours', style: `top:${y(workEnd)}px;bottom:0` }));
+  for (let h = first; h < last; h++) {
+    grid.append(el('div', { class: 'hour', style: `top:${y(h * 60)}px` }, el('span', {}, `${String(h).padStart(2, '0')}:00`)));
+  }
+
+  // Events and slotted tasks share the space; overlapping ones sit side by side.
+  const items = [
+    ...timed.map((e) => ({ kind: 'event', data: e, start: minutes(e.start), end: Math.max(minutes(e.end), minutes(e.start) + SNAP) })),
+    ...day.slotted.filter(passesFilter).map((t) => ({ kind: 'task', data: t, start: minutes(t.slot.start), end: minutes(t.slot.start) + t.slot.minutes })),
+  ];
+  for (const item of layOut(items)) {
+    const style = `top:${y(item.start)}px;height:${Math.max(18, y(item.end) - y(item.start) - 2)}px;` +
+      `left:calc(var(--gutter) + (100% - var(--gutter)) * ${item.lane / item.lanes});width:calc((100% - var(--gutter)) / ${item.lanes} - 3px)`;
+    grid.append(item.kind === 'event' ? eventBlock(item.data, style) : taskBlock(item.data, style));
+  }
+
+  // Where we are in the day.
+  if (day.isToday) {
+    const now = new Date();
+    const m = now.getHours() * 60 + now.getMinutes();
+    if (m >= first * 60 && m <= last * 60) grid.append(el('div', { class: 'now', style: `top:${y(m)}px`, title: 'Now' }));
+  }
+
+  const marker = el('div', { class: 'drop-marker', hidden: '' });
+  grid.append(marker);
+  makeTimelineTarget(grid, marker, first);
+  return grid;
+}
+
+/**
+ * Side-by-side lanes for overlapping items: each item takes the first lane
+ * that's free when it starts, and every item in a run of overlaps shares
+ * the same width.
+ */
+function layOut(items) {
+  const sorted = [...items].sort((a, b) => a.start - b.start || b.end - a.end);
+  const placed = [];
+  let cluster = [];
+  let clusterEnd = -1;
+  const close = () => {
+    const lanes = Math.max(1, ...cluster.map((i) => i.lane + 1));
+    for (const item of cluster) placed.push({ ...item, lanes });
+    cluster = [];
+  };
+  for (const item of sorted) {
+    if (item.start >= clusterEnd && cluster.length) close();
+    const laneEnds = [];
+    for (const other of cluster) laneEnds[other.lane] = Math.max(laneEnds[other.lane] ?? 0, other.end);
+    let lane = 0;
+    while (laneEnds[lane] !== undefined && laneEnds[lane] > item.start) lane++;
+    cluster.push({ ...item, lane });
+    clusterEnd = Math.max(clusterEnd, item.end);
+  }
+  if (cluster.length) close();
+  return placed;
+}
+
+function eventBlock(event, style) {
+  const time = `${event.startsEarlier ? '…' : event.start}–${event.endsLater ? '…' : event.end}`;
+  return el('div', { class: 'event', 'data-busy': String(event.busy), style, title: eventTitle(event) },
+    el('span', { class: 'block-time' }, time), ' ', el('span', { class: 'block-title' }, event.title));
+}
+
+function eventTitle(event) {
+  const when = event.allDay ? 'All day' : `${event.start}–${event.end}`;
+  return [event.title, when, event.location, event.calendar, event.busy ? '' : 'Shown as free'].filter(Boolean).join(' · ');
+}
+
+/** A slotted task on the timeline: drag it to move, ✓ to finish, × to unslot. */
+function taskBlock(task, style) {
+  const end = addMinutes(task.slot.start, task.slot.minutes);
+  const block = el('div', { class: 'block', 'data-id': task.id, 'data-quadrant': task.priority.placement, style, draggable: 'true',
+    title: `${task.title} · ${task.slot.start}–${end} · ${QUADRANTS[task.priority.placement].label}` });
+  if (task.id === state.selectedId) block.classList.add('is-selected');
+
+  const check = el('button', { type: 'button', class: 'check', title: 'Mark done (x)', 'aria-label': `Mark "${task.title}" done` });
+  check.addEventListener('click', (event) => { event.stopPropagation(); complete(task); });
+  const unslot = el('button', { type: 'button', class: 'unslot', title: 'Take off the timeline (keeps it planned for this day)', 'aria-label': 'Remove time' }, '×');
+  unslot.addEventListener('click', (event) => { event.stopPropagation(); schedule(task, { scheduledDate: task.scheduledDate, slot: null }); });
+
+  block.append(check,
+    el('span', { class: 'block-time' }, `${task.slot.start}–${end}`), ' ',
+    el('span', { class: 'block-title' }, task.title),
+    unslot);
+  block.addEventListener('mousedown', () => { state.selectedId = task.id; markSelected(); });
+  block.addEventListener('dblclick', () => toggleEdit(task.id));
+  block.addEventListener('dragstart', (event) => {
+    event.dataTransfer?.setData('application/x-task-id', task.id);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+    block.classList.add('is-dragging');
+  });
+  block.addEventListener('dragend', () => block.classList.remove('is-dragging'));
+  return block;
+}
+
+/** The right column: open tasks not yet planned for this day, in matrix order. */
+function toFitIn(day) {
+  const onThisDay = new Set([...day.slotted, ...day.scheduled].map((t) => t.id));
+  const column = el('section', { class: 'fit-in', 'aria-label': 'To fit in' },
+    el('h3', {}, 'To fit in'),
+    el('p', { class: 'hint' }, 'Drag onto the timeline to give it a time, or select and press s for the next free slot.'));
+
+  const groups = ['do', 'schedule', 'delegate', 'untriaged', 'eliminate'];
+  for (const id of groups) {
+    const tasks = (quadrant(id)?.tasks ?? []).filter((t) => !onThisDay.has(t.id)).filter(passesFilter);
+    if (!tasks.length) continue;
+    const list = el('ul', { class: 'list' }, ...tasks.map(taskRow));
+    // The bottom two are folded away: rarely what you'd plan a day around.
+    if (id === 'untriaged' || id === 'eliminate') {
+      column.append(el('details', { class: 'fit-group', 'data-quadrant': id },
+        el('summary', {}, `${QUADRANTS[id].label} (${tasks.length})`), list));
+    } else {
+      column.append(el('div', { class: 'fit-group', 'data-quadrant': id }, el('h4', {}, QUADRANTS[id].label, el('span', { class: 'q-count' }, String(tasks.length))), list));
+    }
+  }
+  if (column.querySelectorAll('.task').length === 0) column.append(el('p', { class: 'q-empty' }, 'Everything open is planned for this day.'));
+  makeScheduleTarget(column, () => null); // dropping back here unschedules
+  return column;
+}
+
+/** "3h 30m free · 11:00–14:00, 15:30–18:00" */
+function freeWords(day, agenda) {
+  if (!day.free) return 'This day is over.';
+  const { minutes: m, gaps } = day.free;
+  const hours = `${agenda.dayHours.start}–${agenda.dayHours.end}`;
+  if (m === 0) return day.isToday ? `No free time left today (${hours}).` : `No free time between ${hours}.`;
+  const list = gaps.slice(0, 4).map((g) => `${g.start}–${g.end}`).join(', ') + (gaps.length > 4 ? ' …' : '');
+  return `${duration(m)} free${day.isToday ? ' for the rest of the day' : ''} (${hours})${list ? ` · ${list}` : ''}`;
+}
+
+/** Bring the working day into view the first time a day is drawn. */
+let scrolledFor = null;
+function scrollTimelineOnce(day, agenda) {
+  if (scrolledFor === day.date) return;
+  scrolledFor = day.date;
+  const grid = $('day').querySelector('.timeline');
+  if (!grid) return;
+  const first = Number(grid.dataset.first);
+  const target = day.isToday ? new Date().getHours() * 60 - 60 : minutes(agenda.dayHours.start);
+  const top = grid.getBoundingClientRect().top + window.scrollY + ((Math.max(target, first * 60) - first * 60) * HOUR_PX) / 60 - 120;
+  if (top > window.scrollY + window.innerHeight * 0.6) window.scrollTo({ top, behavior: 'smooth' });
+}
+
+function shiftDay(days) {
+  if (!state.day) return;
+  goToDay(addDays(state.day, days));
+}
+
+async function goToDay(date) {
+  state.day = date;
+  if (state.view !== 'day') setView('day');
+  await refresh();
+}
+
+// ---- Drag to schedule (4.2) ----------------------------------------------------
+
+/** Dropping on the timeline: a slot at the time under the pointer, snapped. */
+function makeTimelineTarget(grid, marker, firstHour) {
+  const minuteAt = (event) => {
+    const rect = grid.getBoundingClientRect();
+    const raw = firstHour * 60 + ((event.clientY - rect.top) * 60) / HOUR_PX;
+    return Math.max(0, Math.round(raw / SNAP) * SNAP);
+  };
+  grid.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer?.types.includes('application/x-task-id')) return;
+    event.preventDefault();
+    const m = minuteAt(event);
+    marker.hidden = false;
+    marker.style.top = `${((m - firstHour * 60) * HOUR_PX) / 60}px`;
+    marker.textContent = toTime(m);
+  });
+  grid.addEventListener('dragleave', (event) => {
+    if (!grid.contains(/** @type {Node} */ (event.relatedTarget))) marker.hidden = true;
+  });
+  grid.addEventListener('drop', (event) => {
+    event.preventDefault();
+    marker.hidden = true;
+    const task = draggedTask(event);
+    if (!task) return;
+    const length = task.slot?.minutes ?? DEFAULT_MINUTES;
+    const start = Math.min(minuteAt(event), 24 * 60 - length);
+    schedule(task, { scheduledDate: state.day, slot: { start: toTime(start), minutes: length } });
+  });
+}
+
+/** Any other drop area. `slotFor` returns the slot to set, or null to unschedule. */
+function makeScheduleTarget(area, slotFor) {
+  area.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer?.types.includes('application/x-task-id')) return;
+    event.preventDefault();
+    area.classList.add('is-drop-target');
+  });
+  area.addEventListener('dragleave', (event) => {
+    if (!area.contains(/** @type {Node} */ (event.relatedTarget))) area.classList.remove('is-drop-target');
+  });
+  area.addEventListener('drop', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    area.classList.remove('is-drop-target');
+    const task = draggedTask(event);
+    if (!task) return;
+    const target = slotFor();
+    if (target === null) {
+      if (task.scheduledDate === state.day) schedule(task, { scheduledDate: null, slot: null });
+    } else {
+      schedule(task, { scheduledDate: state.day, slot: target.slot });
+    }
+  });
+}
+
+function draggedTask(event) {
+  const id = event.dataTransfer?.getData('application/x-task-id');
+  return id ? state.open.find((t) => t.id === id) : null;
+}
+
+/** `s`: put the selected task in the first free gap long enough for it. */
+function scheduleInNextGap(task) {
+  const day = state.dayAgenda?.days[0];
+  const length = task.slot?.minutes ?? DEFAULT_MINUTES;
+  const gap = day?.free?.gaps.find((g) => minutes(g.end) - roundUp(minutes(g.start)) >= length);
+  if (!gap) {
+    showToast(`No free ${duration(length)} left ${dayName(state.day, state.dayAgenda.today).match(/^(Today|Tomorrow|Yesterday)$/) ? dayWord(state.day, state.dayAgenda.today) : `on ${dayName(state.day, state.dayAgenda.today)}`}. Drag it onto the timeline instead.`, null);
+    return;
+  }
+  schedule(task, { scheduledDate: state.day, slot: { start: toTime(roundUp(minutes(gap.start))), minutes: length } });
+}
+
+// ---- Ahead: the next 14 days (4.3) -------------------------------------------------
+
+function renderAhead() {
+  const container = $('ahead');
+  const agenda = state.ahead;
+  if (!agenda) return;
+  const parts = [];
+
+  if (agenda.overdue.length) {
+    parts.push(aheadSection('Overdue', 'is-overdue', agenda.overdue.filter(passesFilter).map((t) => withLabel(t, 'Due', dueWords(t)))));
+  }
+  if (agenda.missed.length) {
+    parts.push(aheadSection('Planned for an earlier day, still open', 'is-missed',
+      agenda.missed.filter(passesFilter).map((t) => withLabel(t, 'Was planned for', dayWord(t.scheduledDate, agenda.today)))));
+  }
+
+  // Days with nothing on them are folded into one line: "Nothing on Sat 17 – Sun 18".
+  let emptyRun = [];
+  const flushEmpty = () => {
+    if (!emptyRun.length) return;
+    const first = dayName(emptyRun[0].date, agenda.today);
+    const last = dayName(emptyRun[emptyRun.length - 1].date, agenda.today);
+    parts.push(el('p', { class: 'ahead-empty' }, emptyRun.length === 1 ? `Nothing on ${first}` : `Nothing on ${first} – ${last}`));
+    emptyRun = [];
+  };
+
+  for (const day of agenda.days) {
+    const rows = [
+      ...day.events.map((e) => eventRow(e)),
+      ...day.slotted.filter(passesFilter).map((t) => withLabel(t, 'At', `${t.slot.start}–${addMinutes(t.slot.start, t.slot.minutes)}`)),
+      ...day.scheduled.filter(passesFilter).map((t) => withLabel(t, 'Planned', 'that day')),
+      ...day.due.filter(passesFilter).map((t) => withLabel(t, 'Due', t.priority.dueInDays === 0 ? 'today' : 'that day')),
+    ];
+    if (rows.length === 0) { emptyRun.push(day); continue; }
+    flushEmpty();
+
+    const open = el('button', { type: 'button', class: 'day-link', title: 'Open this day' }, dayName(day.date, agenda.today, true));
+    open.addEventListener('click', () => goToDay(day.date));
+    const counts = [];
+    const dueCount = day.due.length + [...day.scheduled, ...day.slotted].filter((t) => t.dueDate === day.date).length;
+    if (dueCount) counts.push(`${dueCount} due`);
+    if (day.free) counts.push(`${duration(day.free.minutes)} free`);
+    parts.push(el('section', { class: 'ahead-day' + (day.isToday ? ' is-today' : '') },
+      el('header', {}, open, el('span', { class: 'ahead-counts' }, counts.join(' · '))),
+      el('ul', { class: 'list' }, ...rows)));
+  }
+  flushEmpty();
+
+  if (agenda.dueLater.length) {
+    parts.push(aheadSection('Due after that', '', agenda.dueLater.filter(passesFilter).map((t) =>
+      withLabel(t, 'Due', formatDate(t.dueDate, { weekday: 'short', day: 'numeric', month: 'short' })))));
+  }
+  container.replaceChildren(...parts);
+}
+
+function aheadSection(title, className, rows) {
+  if (!rows.length) return el('div');
+  return el('section', { class: `ahead-day ${className}` }, el('header', {}, el('h3', {}, title, el('span', { class: 'q-count' }, String(rows.length)))), el('ul', { class: 'list' }, ...rows));
+}
+
+/** A normal task row with its quadrant and "At 14:00–15:00" / "Planned that day" in front. */
+function withLabel(task, kind, text) {
+  const row = taskRow(task);
+  // Due rows already carry the due chip ("Overdue 2 days", "Due tomorrow"), so they get no second label.
+  if (kind !== 'Due') row.querySelector('.meta')?.prepend(el('span', { class: 'when', 'data-kind': kind.toLowerCase().replace(/\s+/g, '-') }, `${kind} ${text}`));
+  row.querySelector('.meta')?.prepend(quadrantChip(task.priority.placement));
+  return row;
+}
+
+/** A calendar event in the Ahead list: muted, not a task. */
+function eventRow(event) {
+  const time = event.allDay ? 'All day' : `${event.startsEarlier ? '…' : event.start}–${event.endsLater ? '…' : event.end}`;
+  return el('li', { class: 'event-row', 'data-busy': String(event.busy), title: eventTitle(event) },
+    el('span', { class: 'event-time' }, time), el('span', { class: 'event-title' }, event.title),
+    el('span', { class: 'event-cal' }, event.calendar));
+}
+
+// ---- Time helpers ---------------------------------------------------------------------
+
+function minutes(time) {
+  return Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+}
+
+function toTime(m) {
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+function addMinutes(time, m) {
+  return toTime(Math.min(24 * 60, minutes(time) + m));
+}
+
+function roundUp(m) {
+  return Math.ceil(m / SNAP) * SNAP;
+}
+
+/** 90 → "1h 30m" */
+function duration(m) {
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  return h ? (rest ? `${h}h ${rest}m` : `${h}h`) : `${rest}m`;
+}
+
+function addDays(date, days) {
+  return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** "Today", "Tomorrow", "Yesterday", or "Fri 16 Oct". `long` adds the date to the first three. */
+function dayName(date, today, long = false) {
+  const full = formatDate(date, { weekday: 'short', day: 'numeric', month: 'short' });
+  const offset = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+  const word = { [-1]: 'Yesterday', 0: 'Today', 1: 'Tomorrow' }[offset];
+  if (!word) return full;
+  return long ? `${word} · ${full}` : word;
+}
+
+/** dayName for the middle of a sentence: "planned today", not "planned Today". */
+function dayWord(date, today) {
+  return dayName(date, today).replace(/^(Today|Tomorrow|Yesterday)$/, (word) => word.toLowerCase());
+}
+
+/** 4.2: "Planned Thu 14:00" in the matrix and list. */
+function scheduledChip(task) {
+  if (!task.scheduledDate) return null;
+  const today = state.ahead?.today ?? state.matrix?.today;
+  const when = dayWord(task.scheduledDate, today) + (task.slot ? ` ${task.slot.start}` : '');
+  const chip = el('span', { class: 'when', 'data-kind': 'planned', title: 'Planned for' + (task.slot ? ` ${task.slot.start}–${addMinutes(task.slot.start, task.slot.minutes)} on` : '') + ` ${formatDate(task.scheduledDate, { weekday: 'long', day: 'numeric', month: 'long' })}` }, `Planned ${when}`);
+  if (today && task.scheduledDate < today) chip.classList.add('is-missed');
+  return chip;
+}
+
 // ---- Actions --------------------------------------------------------------
 
 const reopen = (task) => () => api('POST', `/api/tasks/${task.id}/reopen`);
@@ -660,6 +1167,27 @@ async function place(task, placement) {
   } else {
     showToast(`Moved to ${QUADRANTS[placement].label}: ${task.title}`, undo);
   }
+  await refresh();
+}
+
+/** 4.2: give a task a day, a day and a time, or neither. Undoable. */
+async function schedule(task, change) {
+  const before = { scheduledDate: task.scheduledDate, slot: task.slot ?? null };
+  try {
+    await api('PATCH', `/api/tasks/${task.id}`, change);
+  } catch (error) {
+    showToast(error.message, null);
+    return;
+  }
+  state.selectedId = task.id;
+  const today = state.ahead?.today;
+  let message;
+  if (!change.scheduledDate) message = `No longer planned: ${task.title}`;
+  else if (change.slot) message = `Planned ${dayWord(change.scheduledDate, today)} ${change.slot.start}–${addMinutes(change.slot.start, change.slot.minutes)}: ${task.title}`;
+  else message = `Planned for ${dayWord(change.scheduledDate, today)}, no set time: ${task.title}`;
+  // Read-only mirror (D8): say so, so the two don't quietly disagree.
+  if (task.origin.source === 'lunatask' && task.mirror) message += ' — here only; Lunatask isn\'t changed';
+  showToast(message, () => api('PATCH', `/api/tasks/${task.id}`, before));
   await refresh();
 }
 
@@ -821,7 +1349,22 @@ document.addEventListener('keydown', (event) => {
       if (selected) toggle(selected, 'urgent');
       break;
     case 'v':
-      setView(state.view === 'matrix' ? 'list' : 'matrix');
+      setView(VIEWS[(VIEWS.indexOf(state.view) + 1) % VIEWS.length]);
+      break;
+    // Phase 4.
+    case 's':
+      if (!selected) break;
+      if (state.view === 'day') scheduleInNextGap(selected);
+      else toggleEdit(selected.id); // the edit panel has the schedule fields
+      break;
+    case '[':
+      if (state.view === 'day') shiftDay(-1);
+      break;
+    case ']':
+      if (state.view === 'day') shiftDay(1);
+      break;
+    case 't':
+      goToDay(state.ahead?.today ?? null);
       break;
   }
 });
@@ -840,7 +1383,7 @@ function selectNeighbour(visible, index) {
 }
 
 function markSelected() {
-  for (const row of document.querySelectorAll('.task[data-id]')) {
+  for (const row of document.querySelectorAll('.task[data-id], .block[data-id]')) {
     row.classList.toggle('is-selected', row.getAttribute('data-id') === state.selectedId);
   }
 }
@@ -860,6 +1403,9 @@ function el(tag, attributes = {}, ...children) {
 for (const button of document.querySelectorAll('#view-switch button')) {
   button.addEventListener('click', () => setView(/** @type {any} */ (button.getAttribute('data-view'))));
 }
+
+// Back/forward, or a typed #day / #ahead in the address bar.
+window.addEventListener('hashchange', () => { if (viewFromHash() !== state.view) setView(viewFromHash()); });
 
 // Re-fetch when you come back to the tab, in case the file changed via sync.
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });

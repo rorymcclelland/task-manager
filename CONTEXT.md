@@ -47,13 +47,16 @@ Same working pattern as the Bolt prototypes:
 
 ## Current status
 
-**Phases 0–3 are built** (14 Oct 2026): a local web app with one list
+**Phases 0–4 are built** (14 Oct 2026): a local web app with one list
 across all sources, quick capture, complete/drop with undo, duplicate merging,
-and an Eisenhower matrix as the default view — tasks move between quadrants by
+and an Eisenhower matrix as the default view. Tasks move between quadrants by
 drag or keyboard, due dates raise urgency automatically, and an overfull
 "Do now" is flagged. Phase 3 pulls tasks in: Lunatask is mirrored over its
 API, Claude and Gemini tasks arrive by pasting a block or dropping a file in
 an inbox folder, and checkboxes/TODOs in your notes folders are mirrored.
+Phase 4 adds time: your calendar (read from its .ics address) beside the
+list in a Day view, tasks slotted into it, the free time left, and an
+Ahead view of the next 14 days.
 See `README.md` to run it.
 
 ## Sync direction per source (backlog 3.5)
@@ -67,8 +70,9 @@ in `docs/DECISIONS.md`, D8.
 | Claude | Push in, one-way | Paste a block, or a file in the inbox | Only you, here |
 | Gemini | Push in, one-way | The same | Only you, here |
 | Files on this computer | Mirror (read-only) | Scan of `LOCAL_FOLDERS` | Ticked or deleted in the file |
+| Calendar (Google / Outlook / iCloud) | Read-only, events not tasks | Private .ics address, every 15 min | n/a: events aren't stored here (D11) |
 
-Known gap: completing a Lunatask task here doesn't complete it in Lunatask.
+Known gap: completing (or scheduling) a Lunatask task here doesn't change it in Lunatask.
 If that becomes annoying, completion write-back is the first to add.
 
 ## Open decisions
@@ -82,6 +86,8 @@ Settled on 14 Oct 2026 (reasons in `docs/DECISIONS.md`):
   later.
 - ~~Claude and Gemini capture route~~ → deliberate capture: paste a block or
   drop a file in the inbox; no scraping (D9).
+- ~~Where the calendar comes from~~ → the calendar's own .ics address;
+  Lunatask has no calendar API (D11).
 
 Still open:
 

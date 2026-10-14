@@ -327,3 +327,140 @@ change. Only upper-case `TODO` counts, so prose like "my todo list" doesn't.
 **Rejected.** "Recently changed files imply work in progress" — too much
 guessing for a list that has to be believable. Registering it by hand is
 already one line in the capture box with `#local`.
+
+---
+
+## D11 — Calendar: read your calendar's private .ics address, not Lunatask
+
+_14 Oct 2026 · backlog 4.1_
+
+**What Lunatask exposes.** Nothing, for the calendar. Its API covers tasks,
+notes, habits, journal and people, with no calendar or events endpoint.
+Lunatask's calendar is your Google, Outlook or iCloud calendar shown inside
+Lunatask, so the events actually live in one of those.
+
+**Decision.** Read the calendar from the source, through its private
+iCalendar (.ics) address. Google Calendar ("Secret address in iCal format"),
+Outlook ("Publish calendar" → ICS) and iCloud ("Public calendar") all offer
+one. `CALENDAR_URLS` in `.env` takes one or more addresses, or paths to
+`.ics` files, separated by `;`. The parser is `src/calendar/ics.ts`, and the
+connector that fetches with the other sources is `src/sources/calendar.ts`.
+
+**Why this route.**
+
+- **One format covers every calendar provider,** and nobody's API or sign-in
+  flow has to be built. A Google API connection would mean OAuth, a Google
+  Cloud project and token refresh, all for read-only access that the .ics
+  address already gives.
+- **Read-only by nature,** which matches D8.
+- **No library.** The parser is about 400 lines and runs without
+  dependencies, keeping D1's "nothing to install". It handles time zones
+  (including Outlook's Windows names), all-day and multi-day events, and
+  repeating events: daily, weekly, monthly and yearly, with intervals,
+  counts, end dates, "every Tue and Thu", "last Friday of the month",
+  skipped dates, and single occurrences that have been moved or cancelled.
+  The tests in `test/ics.test.ts` cover each of these.
+
+**Events are not tasks.** They're held in memory and never written to
+`tasks.json`. Events are context for planning, not things to tick off, and
+copying hundreds of them into the sync-folder file every 15 minutes is
+exactly the background rewriting D2 and D5 avoid.
+
+**Limits, on purpose.**
+
+- **The rarer repeat rules** (e.g. "the 2nd weekday of the month", hourly)
+  aren't followed. Such an event shows its first occurrence only, and the
+  Day view says how many events are affected, so a gap is never silent.
+- **An unrecognised time zone** is read as this computer's zone, and the
+  Sources panel names it.
+- **If a fetch fails,** the last good copy stays on screen and Sources says
+  how old it is.
+- **Changes reach the .ics address on the provider's schedule,** not
+  instantly. That can lag by minutes, sometimes longer, so a meeting
+  added a minute ago may not show yet.
+
+**The address is a password.** Anyone with it can read your calendar. It
+lives in `.env` (kept out of git) and is never sent to the page or put in
+an error message. Calendars are named from the name inside the file.
+
+**Rejected.** The Google Calendar API (OAuth set-up and a dependency, for
+the same read-only data). Lunatask (no endpoint). An npm iCal library
+(would add the first runtime dependency; the subset needed is small and
+now tested).
+
+---
+
+## D12 — Scheduling: a day, plus an optional time slot; source dates apply only when they change
+
+_14 Oct 2026 · backlog 4.2 · amends D7 and D8_
+
+**Decision.** A task's `scheduledDate` (already in D3) can carry a `slot`:
+`{start: "HH:MM", minutes}`. The day alone means "some time that day"; the
+slot means "14:00–15:30". A slot needs a day, finishes by midnight, and is
+cleared when the day is.
+
+**Why a wall-clock time, not a timestamp.** For the same reason due dates
+are plain strings (D3): "14:00 on Thursday" means 14:00 wherever this
+computer is. Calendar events arrive as instants and are converted to this
+computer's local time for display, so both end up on the same clock.
+
+**Why a length.** 4.1 asks whether priorities fit "the time actually
+available". That's only answerable if a slotted task takes up time. The
+default is 30 minutes. Drag a task to move it; change the length in its
+edit panel.
+
+**Change to D7/D8: Lunatask's scheduled date only overrules yours when
+Lunatask changes it.** Until now, every sync copied Lunatask's date over
+whatever was here. That would undo any planning done here within 15
+minutes. Now the sync remembers what Lunatask last said
+(`mirror.sourceScheduledDate`) and copies it only when that changes, the
+same "only on the change" rule D8 already uses for completion. When it
+does change, any slot is cleared rather than silently moved to the new
+day. Tasks synced before this change are treated as if Lunatask's last
+word was their current date, so nothing jumps.
+
+**Still read-only.** Scheduling a Lunatask task here doesn't schedule it in
+Lunatask, and the toast says so at the time.
+
+**Capture.** `on:2026-10-20` schedules the day and `at:14:00` adds a
+30-minute slot (today if there's no `on:`). These also work in pasted
+blocks and inbox files, so a Claude conversation can hand over "do this
+Thursday at 10".
+
+---
+
+## D13 — Two new views: Day and Ahead
+
+_14 Oct 2026 · backlog 4.1–4.3 · revisits D1's "plain JavaScript" note_
+
+**Day (4.1, 4.2).** The calendar for one day as a timeline on the left, and
+the open tasks still to fit in on the right, in matrix order (Do now
+first). Drag a task onto a time to slot it, onto "Some time this day" to
+plan the day without a time, or back to the right to unplan it. `s` puts
+the selected task in the first free gap. The header shows the free time
+left inside `DAY_HOURS` (default 09:00–18:00), counting from now if the
+day is today. Events marked "show me as free" (lunch, birthdays) are drawn
+dashed and don't count as busy.
+
+**Ahead (4.3).** The next 14 days, one card per day: events (muted, for
+context), slotted tasks, tasks planned for the day, and tasks due. Above
+them, two lists that would otherwise be easy to miss: **overdue**, and
+**planned for an earlier day, still open**, which is the first sign of a
+plan slipping and leads into Phase 5's stale-task work. Below them, the
+next few deadlines past the fortnight, so nothing just over the edge
+arrives as a surprise. Days with nothing on them fold into one line.
+
+**Why the matrix is still the default.** 2.2 says the first view answers
+"what now?", and the matrix still does that best. Day answers "when?",
+one click or `v` away.
+
+**Why still no framework (D1).** D1 said to revisit plain JavaScript if
+Phase 4's calendar got heavy. It didn't: the timeline is absolutely
+positioned divs, with about 30 lines to lay overlapping items side by
+side. All the date logic is on the server (`src/agenda.ts`), where it's
+pure and tested, and the page only draws what it's given. Not worth a
+framework yet.
+
+**Rejected.** A full week grid like a calendar app's: much more drawing
+code, and cramped at this page width. Ahead's day list answers 4.3
+without it. Writing events into Lunatask or the calendar: read-only (D8).

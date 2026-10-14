@@ -5,9 +5,11 @@
 // here, where they can be tested without a server.
 
 import { randomUUID } from 'node:crypto';
+import { buildAgenda, type Agenda, type DayHours } from './agenda.ts';
+import type { CalendarOccurrence } from './sources/calendar.ts';
 import type { CaptureResult } from './capture.ts';
 import { findDuplicatePairs, type DuplicatePair } from './duplicates.ts';
-import { isDateString, isSource, type Source, type SourceRef, type Task } from './model.ts';
+import { isDateString, isSource, isTimeString, minutesOf, type Slot, type Source, type SourceRef, type Task } from './model.ts';
 import {
   buildMatrix,
   DEFAULT_SETTINGS,
@@ -36,6 +38,9 @@ export interface NewTask {
   /** Optionally place it on the matrix straight away (capture's !1–!4). */
   placement?: Placement;
   dueDate?: string | null;
+  /** Phase 4: capture's on:YYYY-MM-DD and at:HH:MM. */
+  scheduledDate?: string | null;
+  slot?: Slot | null;
 }
 
 /** What happened when several captured tasks were added at once. */
@@ -55,7 +60,13 @@ export interface TaskChanges {
   urgent?: boolean | null;
   dueDate?: string | null;
   scheduledDate?: string | null;
+  /** 4.2: a time on the scheduled day, or null to make it "some time that
+   *  day". Clearing `scheduledDate` clears this too. */
+  slot?: Slot | null;
 }
+
+/** A slot is blocked out for this long unless you say otherwise. */
+export const DEFAULT_SLOT_MINUTES = 30;
 
 export class TaskService {
   private readonly store: TaskStore;
@@ -97,6 +108,26 @@ export class TaskService {
     return tasks.sort((a, b) => (b.closedAt ?? '').localeCompare(a.closedAt ?? ''));
   }
 
+  /** Days from `from`, with tasks and calendar events laid out on them.
+   *  (Phase 4: the Day and Ahead views.) */
+  async agenda(options: {
+    from: string;
+    days: number;
+    occurrences: CalendarOccurrence[];
+    unsupportedRules: number;
+    zone: string;
+    dayHours: DayHours;
+  }): Promise<Agenda> {
+    const now = this.now();
+    return buildAgenda({
+      ...options,
+      tasks: await this.store.all(),
+      today: localDateString(now),
+      nowTime: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+      settings: this.settings,
+    });
+  }
+
   async get(id: string): Promise<Task> {
     const task = await this.store.get(id);
     if (!task) throw new NotFoundError(`No task with id ${id}`);
@@ -123,7 +154,8 @@ export class TaskService {
       alsoIn: [],
       ...flagsFor(input.placement ?? 'untriaged'),
       dueDate: input.dueDate === undefined ? null : requireDateOrNull(input.dueDate, 'dueDate'),
-      scheduledDate: null,
+      scheduledDate: input.scheduledDate === undefined ? null : requireDateOrNull(input.scheduledDate, 'scheduledDate'),
+      slot: input.slot === undefined ? null : requireSlotOrNull(input.slot),
       status: 'open',
       mergedInto: null,
       notDuplicateOf: [],
@@ -131,6 +163,7 @@ export class TaskService {
       updatedAt: timestamp,
       closedAt: null,
     };
+    requireSlotHasDay(task);
     await this.store.save(task);
     return task;
   }
@@ -157,7 +190,11 @@ export class TaskService {
     if (changes.dueDate !== undefined) updated.dueDate = requireDateOrNull(changes.dueDate, 'dueDate');
     if (changes.scheduledDate !== undefined) {
       updated.scheduledDate = requireDateOrNull(changes.scheduledDate, 'scheduledDate');
+      // Unscheduling the day unschedules the time on it.
+      if (updated.scheduledDate === null) updated.slot = null;
     }
+    if (changes.slot !== undefined) updated.slot = requireSlotOrNull(changes.slot);
+    requireSlotHasDay(updated);
 
     updated.updatedAt = this.now().toISOString();
     await this.store.save(updated);
@@ -349,6 +386,24 @@ function cleanUrl(value: unknown): string | null {
 function requireTriState(value: unknown, field: string): boolean | null {
   if (value === true || value === false || value === null) return value;
   throw new ValidationError(`${field} must be true, false or null`);
+}
+
+/** A slot from untrusted input: {start: "HH:MM", minutes?}, or null. Must
+ *  finish by midnight — a task running into tomorrow is two tasks. */
+function requireSlotOrNull(value: unknown): Slot | null {
+  if (value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('slot must be {start, minutes} or null');
+  const { start, minutes = DEFAULT_SLOT_MINUTES } = value as Record<string, unknown>;
+  if (!isTimeString(start)) throw new ValidationError('slot.start must be a time like 09:30');
+  if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 5 || minutes > 24 * 60) {
+    throw new ValidationError('slot.minutes must be a whole number from 5 to 1440');
+  }
+  if (minutesOf(start) + minutes > 24 * 60) throw new ValidationError('A slot has to finish by midnight');
+  return { start, minutes };
+}
+
+function requireSlotHasDay(task: Task): void {
+  if (task.slot && !task.scheduledDate) throw new ValidationError('Give it a scheduled day before a time');
 }
 
 function requireDateOrNull(value: unknown, field: string): string | null {

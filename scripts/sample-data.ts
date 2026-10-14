@@ -25,6 +25,11 @@
 //     picked up, so the first sync on start has something to do. The sample
 //     uses its own notes and inbox folders and never syncs your real Lunatask,
 //     so trying it can't touch your real data.
+//   - Phase 4: a sample calendar (data/sample-calendar.ics) with a daily
+//     standup, meetings today and this week — two overlapping — an event
+//     shown as free, an all-day offsite and a monthly review; plus tasks
+//     slotted into today and tomorrow, one planned for today with no time,
+//     and one planned for a day already gone.
 
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
@@ -36,6 +41,7 @@ import { JsonFileStore } from '../src/store/json-file-store.ts';
 const sampleFile = resolve(join(import.meta.dirname, '..', 'data', 'sample-tasks.json'));
 const sampleNotes = resolve(join(import.meta.dirname, '..', 'data', 'sample-notes'));
 const sampleInbox = resolve(join(import.meta.dirname, '..', 'data', 'sample-inbox'));
+const sampleCalendar = resolve(join(import.meta.dirname, '..', 'data', 'sample-calendar.ics'));
 const now = new Date();
 
 // ---- Helpers ----------------------------------------------------------------
@@ -81,6 +87,8 @@ interface Sample {
   urgent?: boolean | null;
   due?: number; //        days from today
   scheduled?: number; //  days from today
+  at?: string; //         a time slot on the scheduled day, "HH:MM"
+  minutes?: number; //    its length (default 30)
   createdDaysAgo: number;
   status?: Status;
   closedDaysAgo?: number;
@@ -103,6 +111,7 @@ function task(s: Sample): Task {
     urgent: s.urgent ?? null,
     dueDate: s.due === undefined ? null : day(s.due),
     scheduledDate: s.scheduled === undefined ? null : day(s.scheduled),
+    slot: s.at ? { start: s.at, minutes: s.minutes ?? 30 } : null,
     status: s.status ?? 'open',
     mergedInto: null,
     notDuplicateOf: [],
@@ -125,9 +134,10 @@ const doNow = [
     notes: 'Decides the Phase 3 import route: API, export file, or manual entry.' }),
   task({ title: 'Pay electricity bill', source: 'lunatask', important: true, urgent: false, due: -2, createdDaysAgo: 12, lunatask: 'next · must',
     notes: 'Marked not urgent, but it is now overdue, so it shows in Do now with ⏱.' }),
-  task({ title: 'Submit expenses for September', source: 'gemini', important: true, due: 0, createdDaysAgo: 9 }),
+  task({ title: 'Submit expenses for September', source: 'gemini', important: true, due: 0, scheduled: 0, createdDaysAgo: 9 }),
   task({ title: 'Prepare agenda for Thursday planning call', source: 'claude', important: true, urgent: true, due: 2, createdDaysAgo: 3 }),
-  task({ title: 'Send Q4 budget draft to finance', source: 'claude', important: true, urgent: true, due: 1, createdDaysAgo: 4 }),
+  task({ title: 'Send Q4 budget draft to finance', source: 'claude', important: true, urgent: true, due: 1, scheduled: 0, at: '15:30', minutes: 60, createdDaysAgo: 4,
+    notes: 'Slotted into today, overlapping the design review — the timeline shows them side by side.' }),
   task({ title: 'Fix the broken backup script on the laptop', source: 'local', important: true, urgent: true, createdDaysAgo: 2,
     notes: 'Scheduled task has been failing silently since last week. Log is in C:\\Scripts\\backup.log.' }),
 ];
@@ -140,13 +150,14 @@ const schedule = [
   task({ title: 'Renew car insurance', source: 'lunatask', important: true, due: 20, createdDaysAgo: 15,
     notes: 'Urgency left blank; the due date is outside the 3-day window, so it counts as not urgent.' }),
   task({ title: 'Review pension contributions', source: 'manual', important: true, urgent: false, scheduled: 10, createdDaysAgo: 30 }),
-  task({ title: 'Write up lessons from the Bolt prototypes', source: 'local', important: true, urgent: false, createdDaysAgo: 6,
+  task({ title: 'Write up lessons from the Bolt prototypes', source: 'local', important: true, urgent: false, scheduled: 1, at: '14:00', minutes: 90, createdDaysAgo: 6,
     notes: 'Rough notes are in Documents\\Bolt\\retro.md.' }),
 ];
 
 // Delegate or fit in — urgent, not important.
 const delegate = [
-  task({ title: 'Order printer ink', source: 'manual', important: false, urgent: true, createdDaysAgo: 2 }),
+  task({ title: 'Order printer ink', source: 'manual', important: false, urgent: true, scheduled: -2, createdDaysAgo: 4,
+    notes: 'Planned for two days ago and still open, so Ahead lists it under "planned for an earlier day".' }),
   task({ title: 'Return library books', source: 'lunatask', important: false, due: 3, createdDaysAgo: 18,
     notes: 'Due in exactly 3 days — the edge of the window, so it counts as urgent.' }),
   task({ title: 'RSVP to Friday drinks', source: 'gemini', important: false, urgent: true, due: 1, createdDaysAgo: 5 }),
@@ -235,12 +246,35 @@ await writeFile(join(sampleInbox, 'claude-actions.md'), [
 ].join('\n'));
 console.log(`Sample notes in ${sampleNotes}; one file waiting in ${sampleInbox}`);
 
+// …and a calendar (4.1), written the way Google Calendar exports one.
+const ics = (days: number) => day(days).replace(/-/g, '');
+const event = (lines: string[]) => ['BEGIN:VEVENT', `UID:${randomUUID()}@sample`, ...lines, 'END:VEVENT'];
+const zoned = (days: number, time: string) => `;TZID=Europe/Dublin:${ics(days)}T${time.replace(':', '')}00`;
+await writeFile(sampleCalendar, [
+  'BEGIN:VCALENDAR',
+  'VERSION:2.0',
+  'PRODID:-//task-oversight//sample//EN',
+  'X-WR-CALNAME:Sample calendar',
+  ...event(['SUMMARY:Standup', `DTSTART${zoned(-14, '09:30')}`, `DTEND${zoned(-14, '09:45')}`, 'RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR']),
+  ...event(['SUMMARY:1:1 with Aoife', `DTSTART${zoned(0, '11:00')}`, `DTEND${zoned(0, '11:30')}`, 'LOCATION:Teams']),
+  ...event(['SUMMARY:Lunch', `DTSTART${zoned(0, '13:00')}`, `DTEND${zoned(0, '14:00')}`, 'TRANSP:TRANSPARENT']),
+  ...event(['SUMMARY:Design review', `DTSTART${zoned(0, '15:00')}`, `DTEND${zoned(0, '16:00')}`]),
+  ...event(['SUMMARY:Planning call', `DTSTART${zoned(2, '14:00')}`, `DTEND${zoned(2, '15:00')}`, 'LOCATION:Zoom']),
+  ...event(['SUMMARY:Dentist', `DTSTART${zoned(5, '08:30')}`, `DTEND${zoned(5, '09:15')}`]),
+  ...event(['SUMMARY:Team offsite', `DTSTART;VALUE=DATE:${ics(8)}`, `DTEND;VALUE=DATE:${ics(10)}`]),
+  ...event(['SUMMARY:Monthly review', `DTSTART${zoned(-60, '16:00')}`, `DTEND${zoned(-60, '17:00')}`, 'RRULE:FREQ=MONTHLY;BYDAY=-1FR']),
+  'END:VCALENDAR',
+  '',
+].join('\r\n'));
+console.log(`Sample calendar in ${sampleCalendar}`);
+
 if (!process.argv.includes('--no-start')) {
   // server.ts reads these when it loads, so set them first. LUNATASK_TOKEN is
   // cleared so the sample never syncs (and so never changes) your real list.
   process.env.TASKS_FILE = sampleFile;
   process.env.LOCAL_FOLDERS = sampleNotes;
   process.env.INBOX_FOLDER = sampleInbox;
+  process.env.CALENDAR_URLS = sampleCalendar;
   process.env.LUNATASK_TOKEN = '';
   await import('../src/server.ts');
 }

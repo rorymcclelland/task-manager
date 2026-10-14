@@ -177,3 +177,46 @@ test('the matrix groups open tasks and flags an overloaded "Do now"', async () =
   assert.equal(doNow.overloaded, true);
   assert.equal(schedule.tasks.length, 1);
 });
+
+// ---- Phase 4: scheduling ----------------------------------------------------------
+
+test('4.2 — a task can be given a day and a time slot', async () => {
+  const service = await freshService();
+  const task = await service.create({ title: 'Write report' });
+  const updated = await service.update(task.id, { scheduledDate: '2026-10-15', slot: { start: '14:00', minutes: 90 } });
+  assert.deepEqual(updated.slot, { start: '14:00', minutes: 90 });
+});
+
+test('4.2 — a slot needs a day, and unscheduling the day clears the slot', async () => {
+  const service = await freshService();
+  const task = await service.create({ title: 'Write report' });
+  await assert.rejects(service.update(task.id, { slot: { start: '14:00', minutes: 30 } }), /scheduled day/);
+  await service.update(task.id, { scheduledDate: '2026-10-15', slot: { start: '14:00', minutes: 30 } });
+  const cleared = await service.update(task.id, { scheduledDate: null });
+  assert.equal(cleared.slot, null);
+});
+
+test('4.2 — slots are checked: real times, sensible lengths, finished by midnight', async () => {
+  const service = await freshService();
+  const task = await service.create({ title: 'x' });
+  const bad = [
+    { start: '25:00', minutes: 30 },
+    { start: '9:00', minutes: 30 },
+    { start: '09:00', minutes: 2 },
+    { start: '23:30', minutes: 60 },
+    'tomorrow',
+  ];
+  for (const slot of bad) {
+    await assert.rejects(service.update(task.id, { scheduledDate: '2026-10-15', slot: slot as any }), ValidationError);
+  }
+  // Minutes default to 30.
+  const ok = await service.update(task.id, { scheduledDate: '2026-10-15', slot: { start: '09:00' } as any });
+  assert.deepEqual(ok.slot, { start: '09:00', minutes: 30 });
+});
+
+test('4.2 — on:/at: from capture creates a scheduled task', async () => {
+  const service = await freshService();
+  const task = await service.create({ title: 'Call', scheduledDate: '2026-10-16', slot: { start: '09:30', minutes: 30 } });
+  assert.equal(task.scheduledDate, '2026-10-16');
+  assert.deepEqual(task.slot, { start: '09:30', minutes: 30 });
+});

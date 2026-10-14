@@ -12,6 +12,8 @@
 // - `!1` `!2` `!3` `!4` places it on the matrix: Do now, Schedule, Delegate,
 //   Drop/defer — the same numbers as the keyboard shortcuts.
 // - `due:YYYY-MM-DD` sets a due date.
+// - `on:YYYY-MM-DD` schedules it for that day; `at:14:30` gives it a
+//   30-minute slot at that time (on today, if there's no `on:`). Phase 4.
 // - The first link becomes the task's source link. If there's no #tag, the
 //   link says where it came from: a claude.ai link means Claude, a Gemini
 //   link means Gemini, a lunatask:// link means Lunatask.
@@ -27,7 +29,7 @@
 // List markers (-, *, •, 1.) and empty checkboxes are stripped. A line with
 // shortcuts but no title sets defaults for the lines after it.
 
-import { isDateString, isSource, type Source } from './model.ts';
+import { isDateString, isSource, isTimeString, type Slot, type Source } from './model.ts';
 import { QUADRANTS, type Placement } from './priority.ts';
 
 export interface CaptureResult {
@@ -36,7 +38,12 @@ export interface CaptureResult {
   url: string | null;
   placement: Placement;
   dueDate: string | null;
+  scheduledDate: string | null;
+  slot: Slot | null;
 }
+
+/** How long an `at:` slot is blocked out for. */
+const AT_MINUTES = 30;
 
 /** What one line said, before defaults are filled in. Null = not mentioned. */
 interface LineParts {
@@ -45,25 +52,33 @@ interface LineParts {
   url: string | null;
   placement: Placement | null;
   dueDate: string | null;
+  scheduledDate: string | null;
+  start: string | null;
 }
+
+type Defaults = Omit<LineParts, 'title'>;
+const NO_DEFAULTS: Defaults = { source: null, url: null, placement: null, dueDate: null, scheduledDate: null, start: null };
 
 const TAG = /(^|\s)#([a-z]+)(?=\s|$)/gi;
 const QUADRANT_TAG = /(^|\s)!([1-4])(?=\s|$)/g;
 const DUE = /(^|\s)due:(\S+)(?=\s|$)/i;
+const ON = /(^|\s)on:(\S+)(?=\s|$)/i;
+const AT = /(^|\s)at:(\d{1,2}:\d{2})(?=\s|$)/i;
 const URL = /(^|\s)((?:https?|lunatask):\/\/\S+)/i;
 const LIST_MARKER = /^(?:[-*•]|\d+[.)])\s+/;
 const OPEN_CHECKBOX = /^\[ \]\s+/;
 const TICKED_CHECKBOX = /^(?:[-*•]|\d+[.)])?\s*\[[xX]\]\s+/;
 
-/** Parse one line of capture text. */
-export function parseCapture(text: string): CaptureResult {
-  return withDefaults(parseLine(text), { source: null, url: null, placement: null, dueDate: null });
+/** Parse one line of capture text. `today` (YYYY-MM-DD) is the day an
+ *  `at:` with no `on:` lands on. */
+export function parseCapture(text: string, today: string | null = null): CaptureResult {
+  return withDefaults(parseLine(text), NO_DEFAULTS, today);
 }
 
 /** Parse several lines. Returns one result per task line, in order. */
-export function parseCaptureBlock(text: string): CaptureResult[] {
+export function parseCaptureBlock(text: string, today: string | null = null): CaptureResult[] {
   const results: CaptureResult[] = [];
-  let defaults: Omit<LineParts, 'title'> = { source: null, url: null, placement: null, dueDate: null };
+  let defaults: Defaults = NO_DEFAULTS;
 
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
@@ -77,10 +92,12 @@ export function parseCaptureBlock(text: string): CaptureResult[] {
         url: parts.url ?? defaults.url,
         placement: parts.placement ?? defaults.placement,
         dueDate: parts.dueDate ?? defaults.dueDate,
+        scheduledDate: parts.scheduledDate ?? defaults.scheduledDate,
+        start: parts.start ?? defaults.start,
       };
       continue;
     }
-    results.push(withDefaults(parts, defaults));
+    results.push(withDefaults(parts, defaults, today));
   }
   return results;
 }
@@ -107,6 +124,8 @@ function parseLine(text: string): LineParts {
   let url: string | null = null;
   let placement: Placement | null = null;
   let dueDate: string | null = null;
+  let scheduledDate: string | null = null;
+  let start: string | null = null;
 
   const urlMatch = rest.match(URL);
   if (urlMatch) {
@@ -118,6 +137,19 @@ function parseLine(text: string): LineParts {
   if (dueMatch && isDateString(dueMatch[2])) {
     dueDate = dueMatch[2];
     rest = rest.replace(dueMatch[0], ' ');
+  }
+
+  const onMatch = rest.match(ON);
+  if (onMatch && isDateString(onMatch[2])) {
+    scheduledDate = onMatch[2];
+    rest = rest.replace(onMatch[0], ' ');
+  }
+
+  const atMatch = rest.match(AT);
+  const atTime = atMatch ? atMatch[2].padStart(5, '0') : null; // 9:30 → 09:30
+  if (atMatch && isTimeString(atTime)) {
+    start = atTime;
+    rest = rest.replace(atMatch[0], ' ');
   }
 
   rest = rest.replace(TAG, (whole, leadingSpace: string, word: string) => {
@@ -133,10 +165,10 @@ function parseLine(text: string): LineParts {
   });
 
   const title = rest.replace(/\s+/g, ' ').trim();
-  return { title, source, url, placement, dueDate };
+  return { title, source, url, placement, dueDate, scheduledDate, start };
 }
 
-function withDefaults(parts: LineParts, defaults: Omit<LineParts, 'title'>): CaptureResult {
+function withDefaults(parts: LineParts, defaults: Defaults, today: string | null): CaptureResult {
   const url = parts.url ?? defaults.url;
   // Source: an explicit #tag on the line, then the line's own link, then
   // the block's defaults, then "manual".
@@ -148,5 +180,12 @@ function withDefaults(parts: LineParts, defaults: Omit<LineParts, 'title'>): Cap
     url,
     placement: parts.placement ?? defaults.placement ?? 'untriaged',
     dueDate: parts.dueDate ?? defaults.dueDate,
+    ...schedule(parts.scheduledDate ?? defaults.scheduledDate, parts.start ?? defaults.start, today),
   };
+}
+
+/** A time with no day lands on today; with no today either, it's ignored. */
+function schedule(date: string | null, start: string | null, today: string | null): Pick<CaptureResult, 'scheduledDate' | 'slot'> {
+  const day = date ?? (start ? today : null);
+  return { scheduledDate: day, slot: day && start ? { start, minutes: AT_MINUTES } : null };
 }

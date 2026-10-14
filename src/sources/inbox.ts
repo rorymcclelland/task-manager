@@ -34,7 +34,7 @@ export async function processInbox(folder: string, service: TaskService, now: Da
     if (!entry.isFile() || !EXTENSIONS.has(extname(entry.name).toLowerCase())) continue;
     const path = join(folder, entry.name);
     try {
-      const lines = parseCaptureBlock(await readFile(path, 'utf8'));
+      const lines = parseCaptureBlock(await readFile(path, 'utf8'), service.today());
       const added = await service.captureMany(lines);
       result.files++;
       result.created += added.created.length;

@@ -104,3 +104,32 @@ test('tasks from other sources are never touched', () => {
   const { tasks } = sync([manual], []);
   assert.deepEqual(tasks, [manual]);
 });
+
+// ---- Phase 4: the source's scheduled date only applies when it changes (D12) ----
+
+test('4.2 — a day and slot set here survive syncs until the source moves the task', () => {
+  const first = sync([], [item({ scheduledDate: '2026-10-16' })]);
+  // You slot it into Thursday afternoon here.
+  const slotted = { ...first.tasks[0], scheduledDate: '2026-10-15', slot: { start: '14:00', minutes: 60 } };
+
+  // Lunatask still says the 16th: nothing changes.
+  const same = sync([slotted], [item({ scheduledDate: '2026-10-16' })], LATER);
+  assert.equal(same.plan.changed.length, 0);
+
+  // Lunatask moves it to the 20th: that wins, and the slot goes with the old day.
+  const moved = sync(same.tasks, [item({ scheduledDate: '2026-10-20' })], LATER);
+  assert.equal(moved.tasks[0].scheduledDate, '2026-10-20');
+  assert.equal(moved.tasks[0].slot, null);
+  assert.equal(moved.tasks[0].mirror?.sourceScheduledDate, '2026-10-20');
+});
+
+test('4.2 — tasks synced before Phase 4 take the source date as what it last said', () => {
+  const first = sync([], [item({ scheduledDate: '2026-10-16' })]);
+  const legacy = { ...first.tasks[0], mirror: { ...first.tasks[0].mirror!, sourceScheduledDate: undefined } };
+  delete legacy.mirror.sourceScheduledDate;
+  const next = sync([legacy], [item({ scheduledDate: '2026-10-16' })], LATER);
+  // Records what the source said (one write), changes nothing else.
+  assert.equal(next.plan.changed.length, 1);
+  assert.equal(next.tasks[0].scheduledDate, '2026-10-16');
+  assert.equal(next.tasks[0].mirror?.sourceScheduledDate, '2026-10-16');
+});

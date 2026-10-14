@@ -20,11 +20,18 @@
 //   GET   /api/duplicates
 //   GET   /api/sync                        each source's set-up and last sync
 //   POST  /api/sync                        sync every source now
+//   GET   /api/agenda?from=YYYY-MM-DD&days=N   tasks and calendar events by day (Phase 4)
+//
+// Scheduling a task (4.2) is a PATCH: {scheduledDate, slot: {start, minutes} | null}.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
+import { DEFAULT_DAY_HOURS, type DayHours } from './agenda.ts';
+import { localZone } from './calendar/zones.ts';
 import { parseCapture, parseCaptureBlock } from './capture.ts';
+import { isDateString } from './model.ts';
+import type { Calendars } from './sources/calendar.ts';
 import type { SyncRunner } from './sync-runner.ts';
 import { NotFoundError, TaskService, ValidationError, type NewTask } from './tasks.ts';
 
@@ -39,13 +46,21 @@ const CONTENT_TYPES: Record<string, string> = {
 
 type Handler = (request: IncomingMessage, response: ServerResponse) => Promise<void>;
 
-/** `sync` is optional so tests that don't care about sources can leave it out. */
-export function createApp(service: TaskService, sync?: SyncRunner): Handler {
+/** Phase 4 settings for the Day and Ahead views. */
+export interface TimeOptions {
+  calendar?: Calendars;
+  /** The zone calendar times are shown in. Default: this computer's. */
+  zone?: string;
+  dayHours?: DayHours;
+}
+
+/** Everything but `service` is optional, so tests can leave out what they don't need. */
+export function createApp(service: TaskService, sync?: SyncRunner, time: TimeOptions = {}): Handler {
   return async (request, response) => {
     try {
       const url = new URL(request.url ?? '/', 'http://localhost');
       if (url.pathname.startsWith('/api/')) {
-        await handleApi(service, sync, request, response, url);
+        await handleApi(service, sync, time, request, response, url);
       } else {
         await serveStatic(url.pathname, response);
       }
@@ -61,6 +76,7 @@ export function createApp(service: TaskService, sync?: SyncRunner): Handler {
 async function handleApi(
   service: TaskService,
   sync: SyncRunner | undefined,
+  time: TimeOptions,
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
@@ -81,14 +97,14 @@ async function handleApi(
 
   if (resource === 'capture' && id === 'block' && method === 'POST') {
     const { text } = await readJson(request);
-    const lines = parseCaptureBlock(String(text ?? ''));
+    const lines = parseCaptureBlock(String(text ?? ''), service.today());
     if (lines.length === 0) throw new ValidationError('No tasks found in that text');
     return sendJson(response, 201, await service.captureMany(lines));
   }
 
   if (resource === 'capture' && !id && method === 'POST') {
     const { text } = await readJson(request);
-    const parsed = parseCapture(String(text ?? ''));
+    const parsed = parseCapture(String(text ?? ''), service.today());
     return sendJson(response, 201, await service.create(parsed));
   }
 
@@ -97,6 +113,20 @@ async function handleApi(
   if (resource === 'duplicates' && method === 'GET') {
     const pairs = await service.duplicates();
     return sendJson(response, 200, pairs.map((p) => ({ a: p.a, b: p.b, score: p.score })));
+  }
+
+  if (resource === 'agenda' && method === 'GET') {
+    const from = url.searchParams.get('from') ?? service.today();
+    const days = Number(url.searchParams.get('days') ?? 1);
+    if (!isDateString(from)) throw new ValidationError('from must be a YYYY-MM-DD date');
+    if (!Number.isInteger(days) || days < 1 || days > 62) throw new ValidationError('days must be a whole number from 1 to 62');
+    const zone = time.zone ?? localZone();
+    const to = new Date(Date.parse(`${from}T00:00:00Z`) + (days - 1) * 86_400_000).toISOString().slice(0, 10);
+    const events = time.calendar?.between(from, to, zone) ?? { occurrences: [], unsupportedRules: 0 };
+    return sendJson(response, 200, {
+      ...(await service.agenda({ from, days, zone, dayHours: time.dayHours ?? DEFAULT_DAY_HOURS, ...events })),
+      calendars: time.calendar?.configured ? time.calendar.names() : [],
+    });
   }
 
   if (resource === 'sync' && !id) {

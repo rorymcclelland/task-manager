@@ -13,9 +13,12 @@
     <header class="top">
       <h1>Tasks</h1>
       <p class="count" id="count" aria-live="polite"></p>
-      <!-- 2.2: the matrix is the default; the plain list is one click (or v) away. -->
+      <!-- 2.2: the matrix is the default; the other views are one click (or v) away.
+           Phase 4 adds Day (calendar beside the list) and Ahead (the next fortnight). -->
       <div class="view-switch" id="view-switch" role="group" aria-label="View">
         <button type="button" data-view="matrix" title="Matrix (v)">Matrix</button>
+        <button type="button" data-view="day" title="Day: calendar and list side by side (v)">Day</button>
+        <button type="button" data-view="ahead" title="Ahead: the next 14 days (v)">Ahead</button>
         <button type="button" data-view="list" title="List (v)">List</button>
       </div>
     </header>
@@ -24,7 +27,7 @@
     <form id="capture" class="capture" autocomplete="off">
       <label for="capture-input" class="visually-hidden">Add a task</label>
       <input id="capture-input" name="text" type="text"
-             placeholder="Add a task…  (#claude #gemini #local · !1–!4 · due:2026-10-31 · paste a link, or several lines)">
+             placeholder="Add a task…  (#claude #gemini #local · !1–!4 · due:2026-10-31 · on:2026-10-20 at:14:00 · paste a link, or several lines)">
       <button type="submit">Add</button>
     </form>
     <p class="capture-error" id="capture-error" role="alert"></p>
@@ -47,6 +50,12 @@
     <!-- 2.1: the Eisenhower matrix (default view). Drawn by app.js. -->
     <div id="matrix"></div>
 
+    <!-- 4.1, 4.2: one day — calendar on the left, tasks to fit in on the right. -->
+    <div id="day" hidden></div>
+
+    <!-- 4.3: the next 14 days. -->
+    <div id="ahead" hidden></div>
+
     <!-- 1.1: the one list. -->
     <ul class="list" id="list" hidden></ul>
     <p class="empty" id="empty" hidden></p>
@@ -67,7 +76,10 @@
       <span><kbd>0</kbd> unplace</span>
       <span><kbd>i</kbd> important</span>
       <span><kbd>u</kbd> urgent</span>
-      <span><kbd>v</kbd> matrix/list</span>
+      <span><kbd>s</kbd> schedule</span>
+      <span><kbd>[</kbd>/<kbd>]</kbd> day before/after</span>
+      <span><kbd>t</kbd> today</span>
+      <span><kbd>v</kbd> switch view</span>
     </footer>
   </main>
 
