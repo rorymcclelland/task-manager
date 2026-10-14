@@ -18,13 +18,29 @@ const SOURCE_LABELS = {
   local: 'Local',
 };
 
+/** @typedef {'do'|'schedule'|'delegate'|'eliminate'|'untriaged'} Placement */
+
+// The matrix (Phase 2). The order here is the order they're drawn and the
+// order j/k moves through them: "Do now" first, always (2.2).
+const QUADRANTS = /** @type {const} */ ({
+  do: { label: 'Do now', hint: 'Important · urgent', key: '1' },
+  schedule: { label: 'Schedule', hint: 'Important · not urgent', key: '2' },
+  delegate: { label: 'Delegate or fit in', hint: 'Not important · urgent', key: '3' },
+  eliminate: { label: 'Drop or defer', hint: 'Not important · not urgent', key: '4' },
+  untriaged: { label: 'Not placed yet', hint: 'Drag onto the matrix, or select and press 1–4', key: '0' },
+});
+
 const state = {
   open: /** @type {any[]} */ ([]),
   closed: /** @type {any[]} */ ([]),
   duplicates: /** @type {any[]} */ ([]),
+  /** @type {any} */ matrix: null,
+  /** The matrix is the default view (2.2); #list in the address shows the plain list. */
+  /** @type {'matrix' | 'list'} */ view: location.hash === '#list' ? 'list' : 'matrix',
   /** @type {Source | 'all'} */ filter: 'all',
   /** @type {string | null} */ selectedId: null,
   /** @type {string | null} */ editingId: null,
+  loadedOnce: false,
 };
 
 const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
@@ -43,13 +59,26 @@ async function api(method, path, body) {
 }
 
 async function refresh() {
-  const [open, closed, duplicates] = await Promise.all([
+  const [open, closed, duplicates, matrix] = await Promise.all([
     api('GET', '/api/tasks?view=open'),
     api('GET', '/api/tasks?view=closed'),
     api('GET', '/api/duplicates'),
+    api('GET', '/api/matrix'),
   ]);
-  Object.assign(state, { open, closed, duplicates });
+  Object.assign(state, { open, closed, duplicates, matrix });
+
+  // 2.2: on first load, put the cursor on the top task in "Do now", so the
+  // answer to "what now?" is already highlighted.
+  if (!state.loadedOnce) {
+    state.loadedOnce = true;
+    if (state.view === 'matrix') state.selectedId = quadrant('do')?.tasks[0]?.id ?? null;
+  }
   render();
+}
+
+/** One quadrant's data from the server's matrix. */
+function quadrant(id) {
+  return state.matrix?.quadrants.find((q) => q.id === id);
 }
 
 // ---- Drawing the page -------------------------------------------------------
@@ -58,18 +87,142 @@ function render() {
   const visible = visibleTasks();
   if (state.selectedId && !visible.some((t) => t.id === state.selectedId)) state.selectedId = null;
 
-  $('count').textContent = `${state.open.length} open`;
+  const doNow = quadrant('do')?.tasks.length ?? 0;
+  $('count').textContent = `${state.open.length} open · ${doNow} to do now`;
+  renderViewSwitch();
   renderFilters();
   renderDuplicates();
-  renderList(visible);
+
+  const matrixView = state.view === 'matrix';
+  $('matrix').hidden = !matrixView;
+  $('list').hidden = matrixView;
+  document.querySelector('.page')?.classList.toggle('is-wide', matrixView);
+  if (matrixView) {
+    renderMatrix();
+    $('empty').hidden = true;
+  } else {
+    renderList(visible);
+  }
   renderClosed();
 }
 
-/** Open tasks that pass the current source filter. A merged task counts for
- *  every system it lives in, not just where it started. */
+/** Open tasks that pass the current source filter, in the order they appear
+ *  on screen — so j/k always move to the task you'd expect. A merged task
+ *  counts for every system it lives in, not just where it started. */
 function visibleTasks() {
-  if (state.filter === 'all') return state.open;
-  return state.open.filter((t) => sourcesOf(t).includes(state.filter));
+  const all = state.view === 'matrix' && state.matrix
+    ? Object.keys(QUADRANTS).flatMap((id) => quadrant(id)?.tasks ?? [])
+    : state.open;
+  return all.filter(passesFilter);
+}
+
+function passesFilter(task) {
+  return state.filter === 'all' || sourcesOf(task).includes(state.filter);
+}
+
+function renderViewSwitch() {
+  for (const button of document.querySelectorAll('#view-switch button')) {
+    button.setAttribute('aria-pressed', String(button.getAttribute('data-view') === state.view));
+  }
+}
+
+function setView(view) {
+  state.view = view;
+  history.replaceState(null, '', view === 'list' ? '#list' : location.pathname);
+  render();
+}
+
+// ---- The matrix (2.1, 2.2, 2.5) ---------------------------------------------
+
+function renderMatrix() {
+  const container = $('matrix');
+  if (!state.matrix) return;
+
+  const untriaged = quadrant('untriaged').tasks.filter(passesFilter);
+  const notice = el('p', { class: 'untriaged-notice' });
+  if (untriaged.length > 0) {
+    const jump = el('a', { href: '#untriaged' }, `${untriaged.length} not placed yet ↓`);
+    jump.addEventListener('click', (event) => {
+      event.preventDefault();
+      $('untriaged').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    notice.append(jump);
+  }
+
+  const grid = el('div', { class: 'matrix' },
+    el('div', { class: 'axis axis--corner' }),
+    el('div', { class: 'axis axis--col' }, 'Urgent'),
+    el('div', { class: 'axis axis--col' }, 'Not urgent'),
+    el('div', { class: 'axis axis--row' }, 'Important'),
+    quadrantSection('do'),
+    quadrantSection('schedule'),
+    el('div', { class: 'axis axis--row' }, 'Not important'),
+    quadrantSection('delegate'),
+    quadrantSection('eliminate'),
+  );
+
+  container.replaceChildren(notice, grid, quadrantSection('untriaged'));
+}
+
+function quadrantSection(id) {
+  const data = quadrant(id);
+  const tasks = data.tasks.filter(passesFilter);
+  const info = QUADRANTS[id];
+
+  const count = data.limit !== null ? `${data.tasks.length} / ${data.limit}` : String(tasks.length);
+  const header = el('header', {},
+    el('h2', {}, info.label),
+    el('span', { class: 'q-count', title: data.limit !== null ? `Soft limit: ${data.limit}` : '' }, count),
+    el('span', { class: 'q-hint' }, info.hint),
+    el('kbd', { title: `Select a task and press ${info.key} to move it here` }, info.key),
+  );
+
+  const section = el('section', { class: 'quadrant', 'data-quadrant': id, 'aria-label': info.label }, header);
+  if (id === 'untriaged') section.id = 'untriaged';
+  if (data.overloaded) {
+    section.classList.add('is-overloaded');
+    // 2.5: say it plainly, with what to do about it.
+    section.append(el('p', { class: 'overload', role: 'note' },
+      `${data.tasks.length} tasks in "Do now" — over your limit of ${data.limit}. ` +
+      'When everything is urgent and important, nothing is. Can any move to Schedule, be handed off, or be dropped?'));
+  }
+
+  if (tasks.length > 0) {
+    section.append(el('ul', { class: 'list' }, ...tasks.map(taskRow)));
+  } else {
+    const empty = {
+      do: 'Nothing urgent and important.',
+      schedule: 'Nothing planned ahead.',
+      delegate: 'Nothing here.',
+      eliminate: 'Nothing here.',
+      untriaged: 'Everything is placed.',
+    }[id];
+    section.append(el('p', { class: 'q-empty' }, state.filter === 'all' ? empty : 'Nothing here from this source.'));
+  }
+
+  if (id === 'untriaged' && data.tasks.length === 0 && state.open.length === 0) section.hidden = true;
+  makeDropTarget(section, id);
+  return section;
+}
+
+// ---- Drag and drop between quadrants (2.3) ---------------------------------
+
+function makeDropTarget(section, placement) {
+  section.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer?.types.includes('application/x-task-id')) return;
+    event.preventDefault(); // allows the drop
+    section.classList.add('is-drop-target');
+  });
+  section.addEventListener('dragleave', (event) => {
+    if (!section.contains(/** @type {Node} */ (event.relatedTarget))) section.classList.remove('is-drop-target');
+  });
+  section.addEventListener('drop', (event) => {
+    event.preventDefault();
+    section.classList.remove('is-drop-target');
+    const id = event.dataTransfer?.getData('application/x-task-id');
+    const task = id && state.open.find((t) => t.id === id);
+    if (task) place(task, placement);
+  });
 }
 
 function sourcesOf(task) {
@@ -109,6 +262,15 @@ function renderList(tasks) {
 function taskRow(task) {
   const li = el('li', { class: 'task', 'data-id': task.id });
   if (task.id === state.selectedId) li.classList.add('is-selected');
+  if (state.view === 'matrix' && state.editingId !== task.id) {
+    li.setAttribute('draggable', 'true');
+    li.addEventListener('dragstart', (event) => {
+      event.dataTransfer?.setData('application/x-task-id', task.id);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      li.classList.add('is-dragging');
+    });
+    li.addEventListener('dragend', () => li.classList.remove('is-dragging'));
+  }
 
   const check = el('button', { type: 'button', class: 'check', title: 'Mark done (x)', 'aria-label': `Mark "${task.title}" done` });
   check.addEventListener('click', () => complete(task));
@@ -117,6 +279,11 @@ function taskRow(task) {
   title.addEventListener('click', () => toggleEdit(task.id));
 
   const meta = el('div', { class: 'meta' });
+  // In the list view, show which quadrant each task is in; in the matrix
+  // that's already obvious from where it sits.
+  if (state.view === 'list' && task.priority) meta.append(quadrantChip(task.priority.placement));
+  const due = dueChip(task);
+  if (due) meta.append(due);
   meta.append(sourceBadge(task.origin));
   for (const ref of task.alsoIn) meta.append(sourceBadge(ref, 'also in '));
   if (task.notes) meta.append(el('span', { class: 'notes-preview', title: task.notes }, task.notes));
@@ -133,6 +300,38 @@ function taskRow(task) {
   li.addEventListener('mousedown', () => { state.selectedId = task.id; markSelected(); });
   if (state.editingId === task.id) li.append(editPanel(task));
   return li;
+}
+
+function quadrantChip(placement) {
+  return el('span', { class: 'q-chip', 'data-quadrant': placement }, QUADRANTS[placement].label);
+}
+
+/** 2.4: the due date in words, flagged when it's what's making the task urgent. */
+function dueChip(task) {
+  const days = task.priority?.dueInDays;
+  if (days === null || days === undefined) return null;
+
+  let text;
+  if (days < -1) text = `Overdue ${-days} days`;
+  else if (days === -1) text = 'Overdue since yesterday';
+  else if (days === 0) text = 'Due today';
+  else if (days === 1) text = 'Due tomorrow';
+  else if (days < 7) text = `Due ${formatDate(task.dueDate, { weekday: 'long' })}`;
+  else text = `Due ${formatDate(task.dueDate, { day: 'numeric', month: 'short' })}`;
+
+  const chip = el('span', { class: 'due', title: `Due ${formatDate(task.dueDate, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}` }, text);
+  if (days < 0) chip.classList.add('is-overdue');
+  if (task.priority.urgencyReason === 'due-soon') {
+    chip.classList.add('is-urgent');
+    const window = state.matrix?.settings.urgentWithinDays ?? 3;
+    chip.title += ` — counts as urgent because it's due within ${window} day${window === 1 ? '' : 's'}`;
+  }
+  return chip;
+}
+
+/** Format a YYYY-MM-DD date for display. Read as UTC so the day never shifts. */
+function formatDate(date, options) {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { ...options, timeZone: 'UTC' });
 }
 
 /** 1.2: a coloured label for the source; a link straight to it when we have one. */
@@ -159,6 +358,16 @@ function editPanel(task) {
   }
   const url = el('input', { name: 'url', type: 'url', placeholder: 'https://…', value: task.origin.url ?? '' });
 
+  // 2.1 / 2.4: the two Eisenhower answers, and the due date that can
+  // override "not urgent".
+  const important = triStateSelect('important', task.important);
+  const urgent = triStateSelect('urgent', task.urgent);
+  const dueDate = el('input', { name: 'dueDate', type: 'date', value: task.dueDate ?? '' });
+  const urgencyNote = el('p', { class: 'hint' });
+  if (task.priority?.urgencyReason === 'due-soon') {
+    urgencyNote.textContent = 'Its due date is close, so it counts as urgent whatever you choose here.';
+  }
+
   const error = el('p', { class: 'error', role: 'alert' });
   const cancel = el('button', { type: 'button' }, 'Cancel');
   cancel.addEventListener('click', () => toggleEdit(null));
@@ -168,6 +377,11 @@ function editPanel(task) {
     el('label', {}, 'Title', title),
     el('label', {}, 'Notes', notes),
     el('div', { class: 'row' }, el('label', {}, 'Came from', source), el('label', {}, 'Link to it there', url)),
+    el('div', { class: 'row row--3' },
+      el('label', {}, 'Important?', important),
+      el('label', {}, 'Urgent?', urgent),
+      el('label', {}, 'Due', dueDate)),
+    urgencyNote,
     error,
     el('div', { class: 'buttons' }, cancel, save),
   );
@@ -194,6 +408,9 @@ function editPanel(task) {
         notes: notes.value,
         source: source.value,
         url: url.value || null,
+        important: fromTriState(important.value),
+        urgent: fromTriState(urgent.value),
+        dueDate: dueDate.value || null,
       });
       state.editingId = null;
       await refresh();
@@ -205,6 +422,25 @@ function editPanel(task) {
 
   queueMicrotask(() => title.focus());
   return form;
+}
+
+/** A Yes / No / Not decided select for a true/false/null field. */
+function triStateSelect(name, value) {
+  const select = el('select', { name });
+  for (const [optionValue, label] of [['', 'Not decided'], ['yes', 'Yes'], ['no', 'No']]) {
+    const option = el('option', { value: optionValue }, label);
+    if (optionValue === toTriState(value)) option.setAttribute('selected', '');
+    select.append(option);
+  }
+  return select;
+}
+
+function toTriState(value) {
+  return value === true ? 'yes' : value === false ? 'no' : '';
+}
+
+function fromTriState(value) {
+  return value === 'yes' ? true : value === 'no' ? false : null;
 }
 
 function renderDuplicates() {
@@ -261,23 +497,66 @@ function renderClosed() {
 
 // ---- Actions --------------------------------------------------------------
 
+const reopen = (task) => () => api('POST', `/api/tasks/${task.id}/reopen`);
+
 async function complete(task) {
   await api('POST', `/api/tasks/${task.id}/complete`);
-  showUndo(`Done: ${task.title}`, task.id);
+  showToast(`Done: ${task.title}`, reopen(task));
   await refresh();
 }
 
 async function dropTask(task) {
   await api('POST', `/api/tasks/${task.id}/drop`);
-  showUndo(`Dropped: ${task.title}`, task.id);
+  showToast(`Dropped: ${task.title}`, reopen(task));
   await refresh();
 }
 
 async function merge(duplicate, keep) {
   await api('POST', `/api/tasks/${duplicate.id}/merge`, { intoId: keep.id });
   state.editingId = null;
-  showUndo(`Merged into: ${keep.title}`, duplicate.id);
+  showToast(`Merged into: ${keep.title}`, reopen(duplicate));
   await refresh();
+}
+
+/** 2.3: move a task to a quadrant (or back to "not placed yet"). Undoable. */
+async function place(task, placement) {
+  if (task.priority?.placement === placement && placement !== 'untriaged') return;
+  const before = { important: task.important, urgent: task.urgent };
+  const placed = await api('POST', `/api/tasks/${task.id}/place`, { quadrant: placement });
+  state.selectedId = task.id;
+
+  const undo = () => api('PATCH', `/api/tasks/${task.id}`, before);
+  if (placed.priority.placement !== placement) {
+    // The due date overruled the move (2.4) — say why, rather than leave the
+    // task apparently refusing to budge.
+    showToast(`Stays in "${QUADRANTS[placed.priority.placement].label}": it's ${dueWords(placed)}. Change the due date to move it.`, undo);
+  } else {
+    showToast(`Moved to ${QUADRANTS[placement].label}: ${task.title}`, undo);
+  }
+  await refresh();
+}
+
+/** i / u: flip one answer. Not decided → yes → no → yes… */
+async function toggle(task, field) {
+  const before = task[field];
+  const next = before === true ? false : true;
+  const updated = await api('PATCH', `/api/tasks/${task.id}`, { [field]: next });
+  const undo = () => api('PATCH', `/api/tasks/${task.id}`, { [field]: before });
+  const word = field === 'important' ? 'important' : 'urgent';
+  if (field === 'urgent' && next === false && updated.priority.urgencyReason === 'due-soon') {
+    showToast(`Still urgent: it's ${dueWords(updated)}. Change the due date to change that.`, undo);
+  } else {
+    showToast(`${next ? 'Marked' : 'Marked not'} ${word}: ${task.title}`, undo);
+  }
+  await refresh();
+}
+
+function dueWords(task) {
+  const days = task.priority.dueInDays;
+  if (days < 0) return 'overdue';
+  if (days === 0) return 'due today';
+  if (days === 1) return 'due tomorrow';
+  return `due in ${days} days`;
 }
 
 function toggleEdit(id) {
@@ -296,13 +575,14 @@ async function run(action, errorElement) {
   }
 }
 
-// ---- Undo toast (so completing or dropping by mistake costs nothing) -----
+// ---- Undo toast (so any action taken by mistake costs nothing) ------------
 
 let toastTimer;
-let undoId = null;
+/** @type {(() => Promise<unknown>) | null} */
+let undoAction = null;
 
-function showUndo(message, taskId) {
-  undoId = taskId;
+function showToast(message, undo) {
+  undoAction = undo;
   $('toast-text').textContent = message;
   $('toast').hidden = false;
   clearTimeout(toastTimer);
@@ -311,8 +591,9 @@ function showUndo(message, taskId) {
 
 $('toast-undo').addEventListener('click', async () => {
   $('toast').hidden = true;
-  if (undoId) await api('POST', `/api/tasks/${undoId}/reopen`);
-  undoId = null;
+  const action = undoAction;
+  undoAction = null;
+  if (action) await action();
   await refresh();
 });
 
@@ -378,6 +659,25 @@ document.addEventListener('keydown', (event) => {
       if (link) window.open(link.url, '_blank', 'noopener');
       break;
     }
+    // 2.3: re-prioritise without touching the mouse.
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '0': {
+      const placement = /** @type {Placement} */ (Object.keys(QUADRANTS).find((id) => QUADRANTS[id].key === event.key));
+      if (selected) place(selected, placement);
+      break;
+    }
+    case 'i':
+      if (selected) toggle(selected, 'important');
+      break;
+    case 'u':
+      if (selected) toggle(selected, 'urgent');
+      break;
+    case 'v':
+      setView(state.view === 'matrix' ? 'list' : 'matrix');
+      break;
   }
 });
 
@@ -395,7 +695,7 @@ function selectNeighbour(visible, index) {
 }
 
 function markSelected() {
-  for (const row of document.querySelectorAll('#list .task')) {
+  for (const row of document.querySelectorAll('.task[data-id]')) {
     row.classList.toggle('is-selected', row.getAttribute('data-id') === state.selectedId);
   }
 }
@@ -411,6 +711,10 @@ function el(tag, attributes = {}, ...children) {
 }
 
 // ---- Start --------------------------------------------------------------------
+
+for (const button of document.querySelectorAll('#view-switch button')) {
+  button.addEventListener('click', () => setView(/** @type {any} */ (button.getAttribute('data-view'))));
+}
 
 // Re-fetch when you come back to the tab, in case the file changed via sync.
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });

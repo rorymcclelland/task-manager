@@ -13,13 +13,18 @@
     <header class="top">
       <h1>Tasks</h1>
       <p class="count" id="count" aria-live="polite"></p>
+      <!-- 2.2: the matrix is the default; the plain list is one click (or v) away. -->
+      <div class="view-switch" id="view-switch" role="group" aria-label="View">
+        <button type="button" data-view="matrix" title="Matrix (v)">Matrix</button>
+        <button type="button" data-view="list" title="List (v)">List</button>
+      </div>
     </header>
 
     <!-- 1.3: capture. Focus it from anywhere with "n" or "/". -->
     <form id="capture" class="capture" autocomplete="off">
       <label for="capture-input" class="visually-hidden">Add a task</label>
       <input id="capture-input" name="text" type="text"
-             placeholder="Add a task…  (#claude #gemini #lunatask #local · paste a link to attach it)">
+             placeholder="Add a task…  (#claude #gemini #lunatask #local · !1–!4 to place it · paste a link)">
       <button type="submit">Add</button>
     </form>
     <p class="capture-error" id="capture-error" role="alert"></p>
@@ -30,8 +35,11 @@
     <!-- 1.5: suggested duplicates appear here when there are any. -->
     <section class="duplicates" id="duplicates" hidden></section>
 
+    <!-- 2.1: the Eisenhower matrix (default view). Drawn by app.js. -->
+    <div id="matrix"></div>
+
     <!-- 1.1: the one list. -->
-    <ul class="list" id="list"></ul>
+    <ul class="list" id="list" hidden></ul>
     <p class="empty" id="empty" hidden></p>
 
     <details class="closed" id="closed">
@@ -46,6 +54,11 @@
       <span><kbd>d</kbd> drop</span>
       <span><kbd>e</kbd> edit</span>
       <span><kbd>o</kbd> open source</span>
+      <span><kbd>1</kbd>–<kbd>4</kbd> move to quadrant</span>
+      <span><kbd>0</kbd> unplace</span>
+      <span><kbd>i</kbd> important</span>
+      <span><kbd>u</kbd> urgent</span>
+      <span><kbd>v</kbd> matrix/list</span>
     </footer>
   </main>
 

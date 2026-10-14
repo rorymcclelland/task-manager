@@ -15,6 +15,13 @@
   --src-lunatask: #7b4fc9;
   --src-local: #2e8b57;
 
+  /* One colour per Eisenhower quadrant (Phase 2). */
+  --q-do: #c0392b;
+  --q-schedule: #2f5bd3;
+  --q-delegate: #b7791f;
+  --q-eliminate: #8a867e;
+  --overload-bg: #fdecea;
+
   color-scheme: light;
 }
 
@@ -32,6 +39,11 @@
     --src-gemini: #79a6ff;
     --src-lunatask: #b596f0;
     --src-local: #6cc596;
+    --q-do: #f2867d;
+    --q-schedule: #7fa2ff;
+    --q-delegate: #e3b158;
+    --q-eliminate: #9b978f;
+    --overload-bg: #3a1f1c;
     color-scheme: dark;
   }
 }
@@ -46,10 +58,16 @@ body {
 }
 
 .page { max-width: 760px; margin: 0 auto; padding: 32px 16px 96px; }
+.page.is-wide { max-width: 1160px; }
 
-.top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.top { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
 h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
-.count { margin: 0; color: var(--muted); font-size: 13px; }
+.count { margin: 0; color: var(--muted); font-size: 13px; flex: 1; }
+
+.view-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; align-self: center; }
+.view-switch button { border: 0; border-radius: 0; font-size: 13px; padding: 5px 14px; color: var(--muted); }
+.view-switch button + button { border-left: 1px solid var(--line); }
+.view-switch button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
 
 .visually-hidden {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
@@ -173,6 +191,74 @@ a.badge:hover { text-decoration: underline; }
 .list--closed .title { color: var(--muted); text-decoration: line-through; cursor: default; }
 .list--closed .task { grid-template-columns: 1fr auto; }
 
+/* ---- Priority chips (Phase 2) ---------------------------------------- */
+.q-chip {
+  font-size: 11px; font-weight: 600; padding: 0 7px; border-radius: 999px;
+  color: var(--q-colour); border: 1px solid var(--q-colour); white-space: nowrap;
+}
+.q-chip[data-quadrant="do"]        { --q-colour: var(--q-do); }
+.q-chip[data-quadrant="schedule"]  { --q-colour: var(--q-schedule); }
+.q-chip[data-quadrant="delegate"]  { --q-colour: var(--q-delegate); }
+.q-chip[data-quadrant="eliminate"] { --q-colour: var(--q-eliminate); }
+.q-chip[data-quadrant="untriaged"] { --q-colour: var(--muted); border-style: dashed; }
+
+.due { white-space: nowrap; }
+.due.is-urgent { color: var(--text); font-weight: 600; }
+.due.is-urgent::before { content: "⏱ "; }
+.due.is-overdue { color: var(--danger); }
+
+/* ---- The matrix (2.1, 2.2, 2.5) -------------------------------------- */
+.untriaged-notice { margin: 0 0 8px; font-size: 13px; min-height: 1.2em; text-align: right; }
+.untriaged-notice a { color: var(--muted); }
+
+.matrix {
+  display: grid;
+  grid-template-columns: 22px 1fr 1fr;
+  grid-template-rows: auto minmax(180px, auto) minmax(180px, auto);
+  gap: 10px;
+}
+.axis { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.axis--col { text-align: center; }
+.axis--row { writing-mode: vertical-rl; transform: rotate(180deg); text-align: center; }
+
+.quadrant {
+  --q-colour: var(--muted);
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--q-colour);
+  border-radius: 8px;
+  padding: 10px 12px 6px;
+  transition: box-shadow 0.1s, border-color 0.1s;
+}
+.quadrant[data-quadrant="do"]        { --q-colour: var(--q-do); }
+.quadrant[data-quadrant="schedule"]  { --q-colour: var(--q-schedule); }
+.quadrant[data-quadrant="delegate"]  { --q-colour: var(--q-delegate); }
+.quadrant[data-quadrant="eliminate"] { --q-colour: var(--q-eliminate); }
+.quadrant[data-quadrant="untriaged"] { margin-top: 18px; border-style: dashed; border-top-width: 1px; background: none; }
+
+.quadrant header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.quadrant h2 { font-size: 15px; margin: 0; color: var(--q-colour); }
+.quadrant[data-quadrant="untriaged"] h2 { color: var(--text); }
+.q-count { font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.q-hint { flex: 1; font-size: 12px; color: var(--muted); text-align: right; }
+.quadrant .list { border-top: 0; }
+.quadrant .task { padding: 8px 4px; }
+.quadrant .task:last-child { border-bottom: 0; }
+.quadrant .task[draggable="true"] { cursor: grab; }
+.quadrant .task.is-dragging { opacity: 0.4; }
+.q-empty { color: var(--muted); font-size: 13px; margin: 6px 0 10px; }
+
+.quadrant.is-drop-target { box-shadow: 0 0 0 2px var(--q-colour); }
+
+/* 2.5: an overloaded "Do now" should look wrong. */
+.quadrant.is-overloaded { background: var(--overload-bg); border-color: var(--q-do); }
+.quadrant.is-overloaded .q-count { color: var(--q-do); }
+.overload { margin: 0 0 6px; font-size: 13px; color: var(--text); }
+
+.edit .row--3 { grid-template-columns: 1fr 1fr 1fr; }
+.edit .hint { margin: -4px 0 0; font-size: 12px; color: var(--muted); }
+
 /* ---- Footer + toast -------------------------------------------------- */
 .keys { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 28px; color: var(--muted); font-size: 12px; }
 kbd {
@@ -195,6 +281,17 @@ kbd {
 @media (max-width: 560px) {
   .actions { opacity: 1; }
   .pair { grid-template-columns: 1fr; }
-  .edit .row { grid-template-columns: 1fr; }
+  .edit .row, .edit .row--3 { grid-template-columns: 1fr; }
   .keys { display: none; } /* keyboard shortcuts don't apply on a phone */
+}
+
+/* Line "Not placed yet" up with the quadrants, past the row labels. */
+@media (min-width: 821px) {
+  .quadrant[data-quadrant="untriaged"] { margin-left: 32px; }
+}
+
+/* On narrower screens the matrix becomes one column, "Do now" still first. */
+@media (max-width: 820px) {
+  .matrix { grid-template-columns: 1fr; grid-template-rows: none; }
+  .axis { display: none; }
 }
