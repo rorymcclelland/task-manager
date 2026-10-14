@@ -296,6 +296,24 @@ Explicitly deferred. Written down so they stop occupying thinking space.
 - Projects or hierarchy above individual tasks.
 - Effort/time estimates and capacity planning.
 - Any reporting or analytics on completion.
+- **7.1 Settings pane.** When I want to connect or change a source, I want
+  to do it from a settings pane in the app, so I never have to create or
+  edit a text file to configure it.
+  - Covers everything `.env` holds today: the Lunatask access token,
+    calendar iCal addresses (add and remove several), notes folders, the
+    inbox folder, working hours, sync interval, and the urgency, Do now
+    and idle limits.
+  - Changes take effect without restarting the app, with a "Test" button
+    per source: connect now and show the result, or the error in words.
+  - Secrets stay secret: the token and calendar addresses are shown
+    masked once saved, never sent back to the page in full, and kept
+    out of git. They stay in a local settings file next to the tasks
+    file, not in `tasks.json`.
+  - `.env` keeps working, for anyone who prefers it, with the pane
+    showing which settings it sets.
+  - Needs a decision entry on where settings live and how they're
+    protected, since the pane can change them (the Q1 same-origin rules
+    apply).
 - **Not in scope at all:** notes, habits, mood tracking, contact tracking.
 
 ---
