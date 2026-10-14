@@ -323,6 +323,27 @@ Explicitly deferred. Written down so they stop occupying thinking space.
   away without a flash of the wrong theme on load. Both themes still pass
   the contrast check. If 7.1 is built first, the choice lives in the
   settings pane.
+- **7.3 UX and UI deep dive.** When I use the app every day, I want it to
+  feel obvious and quick, not just work, so it's the place I *want* to
+  go to rather than one I have to.
+  _Why now:_ six phases each added a view or a panel (matrix, Day, Ahead,
+  List, review, sources, duplicates, banners), each designed on its own.
+  Nobody has yet looked at the whole thing as one experience.
+  _The work:_
+  - **Review what's there:** walk the main journeys — capture, "what now?",
+    planning a day, the weekly review, naming Lunatask tasks — and note
+    where it's slow, unclear or cluttered: too many controls on screen,
+    things that need explaining, what's found only by keyboard.
+  - **Look outside:** how good task apps handle the same jobs (Lunatask,
+    Things, Todoist, Sunsama, Akiflow), and plain usability heuristics.
+  - **Propose something better:** a written report with findings ranked
+    by impact, and a redesigned layout as mockups to react to *before*
+    any code changes, including the navigation between views, the
+    header, and the density of task rows.
+  - **Then build it** in small steps, each with before/after screenshots,
+    keeping every keyboard shortcut and the accessibility checks passing.
+  _Worth doing before 7.1, 7.2 and 8.1,_ since each of those changes the
+  interface too.
 - **Not in scope at all:** notes, habits, mood tracking, contact tracking.
 
 ---
