@@ -312,6 +312,17 @@ Explicitly deferred. Written down so they stop occupying thinking space.
   - Needs a decision entry on where settings live and how they're
     protected, since the pane can change them (the Q1 same-origin rules
     apply).
+- **7.2 Light / dark mode switch.** When I want the page lighter or
+  darker than my computer's setting, I want to choose it in the app, so it
+  suits the room and the time of day.
+  _Today:_ the page follows the computer's light or dark setting
+  automatically, and both are complete (all colours are variables in
+  `styles.css`, and both pass the accessibility contrast check).
+  _Done when:_ a switch offers **Light · Dark · Match computer**, defaults
+  to "Match computer", remembers the choice, and changes the page straight
+  away without a flash of the wrong theme on load. Both themes still pass
+  the contrast check. If 7.1 is built first, the choice lives in the
+  settings pane.
 - **Not in scope at all:** notes, habits, mood tracking, contact tracking.
 
 ---
