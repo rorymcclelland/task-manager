@@ -4,7 +4,7 @@ _Last updated: 14 October 2026_
 
 ## What this is
 
-A personal task management app, built for Rory McClelland, whose job is to give
+A personal task management app, built for my own use, whose job is to give
 **one place to see and prioritise everything that currently sits in separate
 systems**.
 
@@ -37,11 +37,13 @@ is no single place that answers "what should I be doing now?" with confidence.
 
 ## How we build it
 
-Same working pattern as the Bolt prototypes:
+Same working pattern as my earlier prototypes:
 
-- Claude writes the code.
-- Rory reads it and questions it — so the code needs to be readable and the
-  reasoning behind structural choices needs to be explicit, not implied.
+- I own the product: the job stories, the scope, the decisions, the QA and
+  the sign-off on every phase.
+- Claude, as an AI coding agent, writes the code. I read it and question it,
+  so the code needs to be readable and the reasoning behind structural
+  choices needs to be explicit, not implied.
 - Everything lives in a git repo pushed to GitHub, committed in reviewable
   increments rather than large drops.
 

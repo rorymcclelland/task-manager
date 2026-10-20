@@ -6,7 +6,8 @@ map; this page is for changing things.
 
 ## How we work
 
-Claude writes the code; Rory reads it and questions it. So:
+I set the job stories and make the decisions; Claude, as an AI coding
+agent, writes the code; I read and question every change. So:
 
 - **Readable over clever.** Plain TypeScript and plain browser
   JavaScript, comments that explain *why*, no framework to learn first.
@@ -134,9 +135,8 @@ the method used, so it can be repeated.
 
 ## The repo and the project folder
 
-The working copy lives in the sync folder
-(`C:\Data\Sync\My files\Projects\Task management app`), which is not
-currently a git checkout. To connect it without changing any file:
+If your working copy lives in a synced folder that isn't yet a git
+checkout, you can connect it without changing any file:
 
 ```powershell
 git init -b main

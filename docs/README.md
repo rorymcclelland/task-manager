@@ -43,4 +43,4 @@ Lunatask and the local machine. Single user, runs on your PC.
 | **Upkeep** | One-card-at-a-time review; banners when a sync fails or the task file can't be read |
 | **Safety** | Only this page and this computer can change tasks; an unreadable task file is never overwritten |
 | **Tests** | 154, Node's built-in runner |
-| **Repo** | `github.com/rorymcclelland/task-manager` (private) |
+| **Repo** | `github.com/rorymcclelland/task-manager` |

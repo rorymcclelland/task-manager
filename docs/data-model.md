@@ -46,8 +46,8 @@ duplicate and placed:
   "notes": "",
   "origin": {
     "source": "lunatask",
-    "externalId": "b2dc1468-8106-489d-a92e-5a8b022fa07a",
-    "url": "lunatask://tasks/b2dc1468-8106-489d-a92e-5a8b022fa07a"
+    "externalId": "00000000-0000-4000-8000-000000000001",
+    "url": "lunatask://tasks/00000000-0000-4000-8000-000000000001"
   },
   "alsoIn": [ { "source": "manual", "externalId": null, "url": null } ],
   "important": true,

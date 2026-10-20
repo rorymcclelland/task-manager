@@ -32,7 +32,7 @@ test('one shared common word is not a match', () => {
 });
 
 test('unrelated tasks are not a match', () => {
-  assert.equal(similarity('Renew car insurance', 'Prepare CFO interview'), 0);
+  assert.equal(similarity('Renew car insurance', 'Prepare quarterly review'), 0);
 });
 
 test('only open tasks are compared', () => {

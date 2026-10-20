@@ -8,9 +8,9 @@ and fix the usual problems. For what to do once it's running, see the
 
 1. **Node.js 22.18 or newer** from <https://nodejs.org> (the LTS
    installer is fine). Check in PowerShell: `node --version`.
-2. **The project folder** — either the synced copy at
-   `C:\Data\Sync\My files\Projects\Task management app`, or a clone of
-   `github.com/rorymcclelland/task-manager`.
+2. **The project folder** — a clone of
+   `github.com/rorymcclelland/task-manager`, or a copy of it anywhere on
+   the PC.
 
 Nothing else. The app has no runtime dependencies; `npm install` is only
 needed for development (it fetches TypeScript for type checking).
@@ -61,7 +61,7 @@ An example `.env`:
 
 ```
 LUNATASK_TOKEN=eyJhbGciOi…
-LOCAL_FOLDERS=C:\Data\Sync\My files\Notes;C:\Data\Sync\My files\Projects
+LOCAL_FOLDERS=C:\Users\you\Documents\Notes;C:\Users\you\Documents\Projects
 CALENDAR_URLS=https://calendar.google.com/calendar/ical/…/basic.ics
 DAY_HOURS=08:30-17:30
 ```
