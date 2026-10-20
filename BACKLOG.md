@@ -1,6 +1,6 @@
 # Task Management App — Backlog
 
-_Last updated: 14 October 2026 · Status: Phases 0–6 built; Phase 7 (later, maybe) and Phase 8 (phone view and reporting) not started_
+_Last updated: 19 October 2026 · Status: Phases 0–6 built; Phase 7 (later, maybe) and Phase 8 (phone view, reporting and subtasks) not started_
 
 Organised by **job to be done**, in phases. Each phase should be usable on its
 own — the aim is that the app earns its place from Phase 1, not after Phase 5.
@@ -367,11 +367,51 @@ Explicitly deferred. Written down so they stop occupying thinking space.
   can cover history from Phase 1 onwards.
   _Starting points:_ done vs dropped by week; by source; how long tasks
   sit before closing; how much of Do now actually got done.
+- **8.3 Subtasks.** When a piece of work breaks into several steps, I want
+  to add them as subtasks under one parent task, so the work reads as one
+  thing with a visible checklist rather than a scatter of loose tasks.
+  _Why now:_ added 19 Oct 2026, when a GitHub profile review produced one
+  task with 13 steps. With no subtasks, they went in as 14 separate tasks
+  sharing a "GitHub:" prefix, which crowds the matrix and loses the link
+  between them.
+  _Scope:_ one level only (a task's subtasks can't have subtasks), so this
+  stays a checklist and doesn't become the "projects or hierarchy" deferred
+  in Phase 7.
+  _The work:_
+  - **Data model:** an optional `parentId` on a task, added the same way as
+    earlier optional fields so older files load unchanged. Subtasks are
+    full tasks (own quadrant, dates, status), so everything that works on a
+    task works on a step.
+  - **Display:** the parent shows a progress count ("4 of 13 done") and
+    expands to its subtasks. By default, only the parent sits on the
+    matrix. A subtask appears there in its own right only when it has been
+    placed differently from its parent, say one urgent step under a
+    Schedule task.
+  - **Capture:** in a pasted block or inbox file, indented lines under a
+    task line become its subtasks. In the app, a quick "add step" on an
+    open task.
+  - **Closing:** completing the last open subtask offers to complete the
+    parent, without doing it automatically. Completing or dropping a parent
+    with open subtasks asks whether to close them too, with Undo.
+  - **Fits with what's there:** duplicate checks don't pair a parent with
+    its own subtasks. The review treats an idle parent with recent subtask
+    activity as not idle. Lunatask mirrors stay flat, since its API has no
+    subtasks.
+  - **Convert existing tasks:** a way to make an existing task a subtask of
+    another (drag onto it, or a "Move under…" choice), starting with the 13
+    "GitHub:" tasks.
+  _Needs:_ a decision entry on the one-level limit and on how subtasks show
+  on the matrix.
+  _Done when:_ a parent with subtasks can be captured from an inbox file,
+  shows its progress, and closes cleanly. The existing GitHub tasks have
+  been moved under their parent, and tests cover nesting, closing and
+  loading older files.
 
 ---
 
 ## Reminder of how we work
 
-Claude writes the code; Rory reads and questions it. Small, reviewable commits in
+I set the job stories and make the decisions; Claude, as an AI coding agent,
+writes the code; I read and question every change. Small, reviewable commits in
 a GitHub repo. Structural choices get a written reason, not just an
 implementation.
