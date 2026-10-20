@@ -3,6 +3,62 @@
 One place to see and prioritise tasks that currently live across Claude,
 Gemini, Lunatask and my own machine. Single user, runs locally.
 
+My tasks were spread across two AI assistants, a task manager and notes on
+my PC, and no single list was complete. This app pulls them into one view,
+ranks them on an Eisenhower matrix and puts them against the calendar, so
+"what should I be doing now?" has one trustworthy answer. The task data
+never leaves the machine it runs on.
+
+![The matrix view, showing sample tasks from five sources placed by importance and urgency](docs/images/matrix.png)
+
+## What it does
+
+- **One list from five sources.** Lunatask (over its API), Claude and
+  Gemini (paste a block, or drop a file in an inbox folder), checkboxes and
+  TODOs in local notes, plus anything typed in. Every source is read-only:
+  nothing is written back.
+- **Eisenhower prioritisation, built in.** Due dates raise urgency on their
+  own, and an overloaded "Do now" is flagged.
+- **Time.** A Day view puts tasks against the calendar and shows the free
+  time left, and Ahead shows the next 14 days.
+- **Keeping it honest.** Duplicates are suggested but never merged
+  automatically, idle tasks are flagged, a review clears what needs
+  deciding, and a failed sync shows as a banner rather than failing silently.
+
+![The Day view: tasks to fit in beside the day's calendar](docs/images/day-view.png)
+
+## Privacy and safety
+
+- **Local only.** It runs on `localhost` and keeps tasks in one JSON file on
+  the machine. There's no hosted back end, no sign-up and no analytics; the
+  only outbound calls are the read-only syncs from Lunatask and the calendar.
+- **Only this page and this computer can change tasks.** Requests from other
+  websites are refused, which closes off cross-site requests and DNS
+  rebinding ([D17](docs/DECISIONS.md)).
+- **Data is never lost.** Nothing is ever deleted, saves are all-or-nothing,
+  and a task file the app can't read is never overwritten ([D18](docs/DECISIONS.md)).
+- **Secrets stay out of git.** The Lunatask token and calendar addresses
+  live in `.env`, and personal data in `data/`; both are git-ignored.
+- **Deliberate capture, not scraping.** AI conversations reach the list only
+  when I paste or drop them in ([D9](docs/DECISIONS.md)).
+
+## How this was built
+
+I owned the product, and an AI coding agent (Claude) wrote the code.
+
+- **Job stories first.** The [backlog](BACKLOG.md) is written as
+  *When …, I want …, so I can …*, in phases that are each usable on their own.
+- **Every structural choice has a written reason.** There are 18 numbered
+  [decisions](docs/DECISIONS.md), from the stack to who may call the API.
+- **Reviewed in small steps.** I read and questioned every change, and the
+  commit history follows the phases.
+- **Tested, then hardened.** A full [QA pass](docs/qa-2026-10-14.md) found
+  one high-severity issue and eleven smaller ones. Each was fixed with a
+  test that failed first, and then retested. 154 tests run on Node's
+  built-in runner.
+
+## Documentation
+
 - **Why it exists and what's in scope:** [`CONTEXT.md`](CONTEXT.md)
 - **What gets built, in what order:** [`BACKLOG.md`](BACKLOG.md)
 - **Why it's built the way it is:** [`docs/DECISIONS.md`](docs/DECISIONS.md)
