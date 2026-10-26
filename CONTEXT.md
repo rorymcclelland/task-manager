@@ -1,6 +1,6 @@
 # Task Management App — Context
 
-_Last updated: 14 October 2026_
+_Last updated: 26 October 2026_
 
 ## What this is
 
@@ -34,6 +34,10 @@ is no single place that answers "what should I be doing now?" with confidence.
   deciding what to do, so the data model and the main view need to support it
   natively rather than bolting it on as a tag.
 - **Single user.** No sharing, no collaboration, no multi-tenancy.
+- **It sits above Lunatask, not in place of it** (26 Oct 2026, D19). Lunatask
+  stays where curated tasks are kept and managed; this app is the oversight
+  and prioritisation layer across every source. Features Lunatask already
+  does well aren't rebuilt here.
 
 ## How we build it
 
@@ -97,8 +101,8 @@ Settled on 14 Oct 2026 (reasons in `docs/DECISIONS.md`):
 - ~~Where the calendar comes from~~ → the calendar's own .ics address;
   Lunatask has no calendar API (D11).
 
-Still open:
+Settled on 26 Oct 2026:
 
-5. **Whether this replaces Lunatask or sits above it.** The backlog is written so
-   either answer stays possible, but it affects how much of the task manager
-   proper needs building.
+- ~~Whether this replaces Lunatask or sits above it~~ → sits above it (D19).
+
+Still open: none.

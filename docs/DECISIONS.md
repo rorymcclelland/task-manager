@@ -654,3 +654,41 @@ page loading. Being strict about *not writing* while lenient about
 **Not done.** Automatic repair of broken JSON. Guessing which half of a
 half-synced file to keep is a decision for a person; the banner says
 where the file is.
+
+---
+
+## D19 — This app sits above Lunatask; it doesn't replace it
+
+_26 Oct 2026 · settles the last open decision in `CONTEXT.md`_
+
+**Decision (Rory).** Lunatask stays the task manager: where curated tasks
+are kept, managed and captured on the go. This app is the layer above it,
+giving oversight and prioritisation across Lunatask, Claude, Gemini, local
+files and the calendar.
+
+**What follows directly.**
+
+- **Lunatask stays the record for its own tasks.** This app shows them,
+  ranks them against everything else and reviews them, but the task itself
+  lives in Lunatask.
+- **We don't rebuild what Lunatask already does well.** A backlog item that
+  only makes sense if this app were the task manager needs a reason beyond
+  "Lunatask does it too".
+- **Doing things twice becomes the main friction.** Both apps stay in daily
+  use, so closing a Lunatask task here and again in Lunatask (D8), and naming
+  every mirrored task by hand (D7), are costs paid for as long as the app is
+  used, not a stopgap.
+
+**Backlog consequences, proposed and awaiting sign-off** (not yet applied
+to `BACKLOG.md`):
+
+- The Phase 3 follow-ups move up: completion write-back to Lunatask (a
+  narrow, deliberate exception to D8) and filling in names from a Lunatask
+  export.
+- Phase 7's recurring tasks and projects/hierarchy become "not planned":
+  Lunatask covers them.
+- 8.1 (phone view) shrinks: Lunatask's own phone app already handles
+  capture away from the desk, and those tasks reach this app through the
+  mirror. What's left is *seeing* the cross-source view on the phone.
+- 8.3 (subtasks) stays: it came from multi-step work captured from Claude,
+  which Lunatask's API couldn't hold for us anyway.
