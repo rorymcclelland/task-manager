@@ -1,6 +1,6 @@
 # Sprint 1 refinement: Lunatask follow-ups
 
-_26 October 2026 · status: draft, awaiting Rory's answers_
+_26 October 2026 · status: L0 ready for Sprint 1; L1 and L2 planned for Sprint 2_
 
 The first sprint under the refine-then-build process. It takes the two open
 Phase 3 follow-ups, which matter more now that the app sits above Lunatask
@@ -35,7 +35,7 @@ real Lunatask, so the sprint is split in two.
 
 | Sprint | Contents | Status |
 |---|---|---|
-| **Sprint 1** | L0: spike, about 1 hour (15 minutes of yours) | Refined below; ready once the questions are answered |
+| **Sprint 1** | L0: spike, about 1 hour (15 minutes of yours) | **Ready, Sprint 1** |
 | **Sprint 2** | L1: complete once. L2: names from the export | Drafted below so the spike asks the right questions; **planned for Sprint 2, refined at the spike's close** |
 
 L1 and L2 can't be marked ready while their design waits on the spike's
@@ -107,7 +107,7 @@ Lunatask will be updated at the next sync".
   files load unchanged.
 - The sync retries anything still to be sent before it reads.
 - The Sources panel shows "Write-back: on · 1 waiting".
-- Setting: `LUNATASK_WRITE_BACK` (see question B).
+- Setting: `LUNATASK_WRITE_BACK`, on by default once a token is set; `off` turns it off (answer B).
 - A new decision entry, D20, as a narrow exception to D8.
 
 **Test cases** (draft, to be confirmed after the spike):
@@ -120,14 +120,17 @@ Lunatask will be updated at the next sync".
    marked as waiting. The next sync sends it once and clears the mark.
 5. If Lunatask answers 401, the task stays waiting, and the banner says the
    token was rejected, as it does for syncs.
-6. Pressing Undo on the toast reopens the task here, and sends Lunatask its
-   previous status (for example `next`).
+6. Pressing Undo on the toast, or Reopen later from the closed list, reopens
+   the task here, and sends Lunatask its previous status (for example `next`)
+   (answer D).
 7. A sync that closes a task because Lunatask completed it never sends
    anything back.
 8. Completing a task in the review counts the same as pressing `x`.
 9. When a merged task has a Lunatask copy in `alsoIn`, completing it
    completes that copy in Lunatask.
 10. With write-back switched off, the app behaves exactly as today.
+10a. Dropping a Lunatask task here sends nothing; the toast keeps "drop it in
+    Lunatask too" (answer C).
 11. Hostile input: a hand-edited `externalId` that isn't a Lunatask ID (for
     example `../x`) is never put into a URL. The task is left waiting, with
     a warning.
@@ -174,7 +177,8 @@ notes ignored".
   nothing is changed.
 - Hostile input: names containing HTML are shown as text.
 - Very long names are handled.
-- Running the same file twice changes nothing.
+- Running the same file twice changes nothing; it can be run whenever new
+  unnamed tasks pile up (answer E).
 
 **Boundaries.** Your export holds all your Lunatask data. The app reads names
 and IDs only, ignores notes, and never copies the file. It suggests deleting
@@ -217,4 +221,18 @@ Recommendations first. Answers will be recorded here.
 
 ## Answers
 
-_(to be filled in)_
+Given by Rory on 26 October 2026; all as recommended.
+
+| | Question | Answer |
+|---|---|---|
+| A | Run the spike now? | Yes, today |
+| B | Write-back on by default once a token is set? | On by default; `LUNATASK_WRITE_BACK=off` turns it off |
+| C | Dropping a Lunatask task here | Nothing changes in Lunatask; the reminder stays |
+| D | Reopening here reopens in Lunatask? | Yes, for both Undo and a later Reopen, to Lunatask's previous status |
+| E | Names import | Repeatable |
+| F | Apply the D19 backlog changes? | Yes; applied to `BACKLOG.md` |
+| G | Safety cap on write-back | Pause and warn above 5 a minute (test 12) |
+
+**L0 is Ready, Sprint 1:** test steps agreed, questions answered,
+boundaries checked (one throwaway task, export read on the PC only), and it
+depends on nothing. Building starts when Rory says go.

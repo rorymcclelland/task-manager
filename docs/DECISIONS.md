@@ -679,12 +679,11 @@ files and the calendar.
   every mirrored task by hand (D7), are costs paid for as long as the app is
   used, not a stopgap.
 
-**Backlog consequences, proposed and awaiting sign-off** (not yet applied
-to `BACKLOG.md`):
+**Backlog consequences** (agreed and applied 26 Oct 2026):
 
 - The Phase 3 follow-ups move up: completion write-back to Lunatask (a
   narrow, deliberate exception to D8) and filling in names from a Lunatask
-  export.
+  export. Refined as Sprints 1 and 2 in `docs/refinement/sprint-1.md`.
 - Phase 7's recurring tasks and projects/hierarchy become "not planned":
   Lunatask covers them.
 - 8.1 (phone view) shrinks: Lunatask's own phone app already handles

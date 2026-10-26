@@ -1,6 +1,6 @@
 # Task Management App — Backlog
 
-_Last updated: 19 October 2026 · Status: Phases 0–6 built; Phase 7 (later, maybe) and Phase 8 (phone view, reporting and subtasks) not started_
+_Last updated: 26 October 2026 · Status: Phases 0–6 built; Sprint 1 (Lunatask spike) ready; Phase 7 (later, maybe) and Phase 8 (phone view, reporting and subtasks) not started_
 
 Organised by **job to be done**, in phases. Each phase should be usable on its
 own — the aim is that the app earns its place from Phase 1, not after Phase 5.
@@ -89,7 +89,7 @@ _Follow-ups, now sprints (refinement in
 
 | Item | Status |
 |---|---|
-| L0 Spike: what Lunatask lets us write, and what its export holds | Refining, Sprint 1 |
+| L0 Spike: what Lunatask lets us write, and what its export holds | Ready, Sprint 1 |
 | L1 Complete once: completing here completes in Lunatask | Planned, Sprint 2 (refined at the spike's close) |
 | L2 Names from a Lunatask export | Planned, Sprint 2 (refined at the spike's close) |
 
@@ -297,8 +297,10 @@ length. `[hidden]` always hides._
 
 Explicitly deferred. Written down so they stop occupying thinking space.
 
-- Recurring tasks.
-- Projects or hierarchy above individual tasks.
+- ~~Recurring tasks.~~ _Not planned: Lunatask covers this, and the app sits
+  above Lunatask (D19)._
+- ~~Projects or hierarchy above individual tasks.~~ _Not planned, for the same
+  reason (D19)._
 - Effort/time estimates and capacity planning.
 - **7.1 Settings pane.** When I want to connect or change a source, I want
   to do it from a settings pane in the app, so I never have to create or
@@ -356,8 +358,11 @@ Explicitly deferred. Written down so they stop occupying thinking space.
 
 ## Phase 8 — On my phone, and looking back
 
-- **8.1 Phone view.** When I'm away from my PC, I want to see and update
-  my list from my phone, so the oversight doesn't stop at my desk.
+- **8.1 Phone view.** When I'm away from my PC, I want to see my
+  cross-source list from my phone, so the oversight doesn't stop at my desk.
+  _Narrowed 26 Oct 2026 (D19): capture and updates away from the desk go
+  through Lunatask's own phone app and reach this app through the mirror,
+  so this is about seeing the overview, not editing it._
   _Today:_ the page already fits a phone's width (checked at 375px in
   QA), but it only runs on the PC at `localhost`, so a phone can't reach
   it, and drag-and-drop and keyboard shortcuts don't suit touch.
