@@ -84,8 +84,14 @@ Gemini by pasting a block of lines or dropping a file in the inbox folder
 read-only (D8). A "Sources" line shows each sync's result or error — the
 start of 5.3._
 
-_Possible follow-ups: fill in Lunatask names from an export file (needs a
-sample export to build against); write completion back to Lunatask._
+_Follow-ups, now sprints (refinement in
+[`docs/refinement/sprint-1.md`](docs/refinement/sprint-1.md)):_
+
+| Item | Status |
+|---|---|
+| L0 Spike: what Lunatask lets us write, and what its export holds | Refining, Sprint 1 |
+| L1 Complete once: completing here completes in Lunatask | Planned, Sprint 2 (refined at the spike's close) |
+| L2 Names from a Lunatask export | Planned, Sprint 2 (refined at the spike's close) |
 
 ---
 
