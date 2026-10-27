@@ -1,6 +1,6 @@
 # Task Management App — Backlog
 
-_Last updated: 26 October 2026 · Status: Phases 0–6 built; Sprint 1 (Lunatask spike) ready; Phase 7 (later, maybe) and Phase 8 (phone view, reporting and subtasks) not started_
+_Last updated: 26 October 2026 · Status: Phases 0–6 built; Sprint 1 (Lunatask spike) in progress; Phase 7 (later, maybe) and Phase 8 (phone view, reporting and subtasks) not started_
 
 Organised by **job to be done**, in phases. Each phase should be usable on its
 own — the aim is that the app earns its place from Phase 1, not after Phase 5.
@@ -89,7 +89,7 @@ _Follow-ups, now sprints (refinement in
 
 | Item | Status |
 |---|---|
-| L0 Spike: what Lunatask lets us write, and what its export holds | Ready, Sprint 1 |
+| L0 Spike: what Lunatask lets us write, and what its export holds | In progress, Sprint 1 |
 | L1 Complete once: completing here completes in Lunatask | Planned, Sprint 2 (refined at the spike's close) |
 | L2 Names from a Lunatask export | Planned, Sprint 2 (refined at the spike's close) |
 
