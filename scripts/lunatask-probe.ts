@@ -12,9 +12,15 @@
 //
 //   1. Lists your Lunatask tasks — IDs and statuses only — and saves them, so
 //      the export check can match against them. No task text is read.
-//   2. Creates one task, "Task app probe, delete me", in the same area as one
-//      of your tasks, with a priority, motivation, quadrant and date set.
-//   3. Asks you to look at it in Lunatask (its name can only be checked there).
+//   2. If an earlier run left its probe task behind, offers to delete it.
+//   3. Creates one task, "Task app probe, delete me", in the area that holds
+//      most of your open tasks, with a status, priority, motivation, quadrant
+//      and date set. If Lunatask ignores any of those on create (it ignored
+//      status, motivation and quadrant on 28 Oct 2026), notes it and sets
+//      them with an update instead.
+//   4. Tells you where the task really is — from what Lunatask recorded, not
+//      what was asked for — and asks you to look at it there (its name can
+//      only be checked in Lunatask).
 //   4. Marks it completed, sending only {"status":"completed"}, and checks
 //      nothing else changed and that Lunatask recorded when.
 //   5. Asks you to check its name survived.
@@ -23,14 +29,15 @@
 //   8. Offers to delete the probe task.
 //
 // Safety:
-//   - It only ever changes the task it created in this run. The one other
-//     write is to a freshly made-up ID, to see how Lunatask answers a task
-//     that doesn't exist.
+//   - It only ever changes the task it created in this run. The other writes
+//     are a delete of the probe task an earlier run recorded creating (only if
+//     you say yes), and one update to a freshly made-up ID, to see how
+//     Lunatask answers a task that doesn't exist.
 //   - Your token is read from .env and never printed or saved.
 //   - Results go to data/lunatask-probe/ (data/ is never committed).
 
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
@@ -49,6 +56,8 @@ export interface ProbeIO {
   today: string;
   /** Area to create the probe task in, if you'd rather choose one. */
   areaId?: string;
+  /** The probe task an earlier run created and didn't delete, if any. */
+  leftoverId?: string;
 }
 
 export interface Finding {
@@ -72,6 +81,12 @@ export interface Answers {
   /** HTTP status Lunatask gives for an update with an invalid status. */
   invalidStatusAnswer: number | null;
   deleted: boolean | null;
+  /** Did Lunatask keep every field the create asked for? */
+  createKeepsFields: boolean | null;
+  /** Asked when you can't see the name: can you see the task at all? */
+  taskVisibleAfterCreate: boolean | null;
+  /** The earlier run's leftover task: deleted (true), kept (false), not there (null). */
+  leftoverDeleted: boolean | null;
 }
 
 export interface ProbeResult {
@@ -83,6 +98,18 @@ export interface ProbeResult {
   unknownId: string | null;
   stoppedEarly: boolean;
 }
+
+/** What the probe task is created with. */
+const REQUESTED = { status: 'next', priority: 1, motivation: 'should', eisenhower: 3 } as const;
+
+/** Lunatask's own names for its status lists. */
+const LIST_NAMES: Record<string, string> = {
+  later: 'Later',
+  next: 'Next',
+  started: 'In progress',
+  waiting: 'Waiting',
+  completed: 'Completed',
+};
 
 /** The fields we compare before and after a status change. */
 const KEPT_FIELDS = ['area_id', 'priority', 'motivation', 'eisenhower', 'scheduled_on'] as const;
@@ -114,6 +141,9 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
     unknownIdAnswer: null,
     invalidStatusAnswer: null,
     deleted: null,
+    createKeepsFields: null,
+    taskVisibleAfterCreate: null,
+    leftoverDeleted: null,
   };
   const result: ProbeResult = { answers, findings: [], apiTasks: [], createdId: null, unknownId: null, stoppedEarly: false };
 
@@ -133,7 +163,9 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
   const call = async (method: string, path: string, body?: unknown): Promise<Reply | null> => {
     if (method !== 'GET' && path !== '/tasks') {
       const id = path.split('/')[2];
-      if (id !== result.createdId && id !== result.unknownId) throw new Error(`Refusing to ${method} a task this probe didn't create`);
+      const allowed =
+        id === result.createdId || id === result.unknownId || (method === 'DELETE' && !!io.leftoverId && id === io.leftoverId);
+      if (!allowed) throw new Error(`Refusing to ${method} a task this probe didn't create`);
     }
     try {
       const response = await io.fetch(`${API}${path}`, {
@@ -178,23 +210,50 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
   const extraKeys = Object.keys(list.body).filter((k) => k !== 'tasks');
   note('Read tasks', true, `${listed.length} task${listed.length === 1 ? '' : 's'} listed${extraKeys.length ? `; the reply also had: ${extraKeys.join(', ')}` : ', in one reply'}`);
 
-  const areaId = io.areaId || listed.find((t) => t.area_id)?.area_id;
+  // ---- 2. An earlier run's leftover -----------------------------------------
+  if (io.leftoverId) {
+    const leftover = listed.find((t) => t.id === io.leftoverId);
+    if (!leftover) {
+      io.say('\nThe probe task from an earlier run is already gone from Lunatask.');
+    } else {
+      const remove = await io.ask(
+        `A probe task from an earlier run is still in Lunatask (in ${listName(leftover.status)}` +
+          `${leftover.scheduled_on ? `, scheduled ${dayWords(String(leftover.scheduled_on))}` : ''}). Delete it now?`,
+      );
+      if (remove) {
+        const deleted = await call('DELETE', `/tasks/${io.leftoverId}`);
+        answers.leftoverDeleted = ok(deleted);
+        note("Delete the earlier run's probe task", answers.leftoverDeleted, deleted ? why(deleted) : 'no answer');
+      } else {
+        answers.leftoverDeleted = false;
+      }
+    }
+  }
+
+  // Where to put the probe task: where you'll look. The first run borrowed the
+  // area of the first task listed — a completed one, in an area you don't use.
+  let areaId = io.areaId;
+  let areaWords = 'the area you chose (LUNATASK_PROBE_AREA)';
   if (!areaId) {
-    stop('none of your tasks has an area to borrow. Set LUNATASK_PROBE_AREA in .env to an area ID (Lunatask → area settings → Copy area ID) and run again.');
+    const openByArea = new Map<string, number>();
+    for (const t of listed) {
+      if (t.area_id && t.status !== 'completed') openByArea.set(t.area_id, (openByArea.get(t.area_id) ?? 0) + 1);
+    }
+    const busiest = [...openByArea].sort((a, b) => b[1] - a[1])[0];
+    if (busiest) {
+      areaId = busiest[0];
+      areaWords = `the area with the most open tasks (${busiest[1]} open)`;
+    }
+  }
+  if (!areaId) {
+    stop('none of your open tasks has an area to borrow. Set LUNATASK_PROBE_AREA in .env to an area ID (Lunatask → area settings → Copy area ID) and run again.');
     return result;
   }
 
-  // ---- 2. Create the probe task --------------------------------------------
-  io.say(`\n2. Creating one task, "${PROBE_NAME}"…`);
-  const created = await call('POST', '/tasks', {
-    name: PROBE_NAME,
-    area_id: areaId,
-    status: 'next',
-    priority: 1,
-    motivation: 'should',
-    eisenhower: 3,
-    scheduled_on: addDays(io.today, 7),
-  });
+  // ---- 3. Create the probe task --------------------------------------------
+  io.say(`\n2. Creating one task, "${PROBE_NAME}", in ${areaWords}…`);
+  const requested: Record<string, unknown> = { ...REQUESTED, scheduled_on: addDays(io.today, 7) };
+  const created = await call('POST', '/tasks', { name: PROBE_NAME, area_id: areaId, ...requested });
   if (!ok(created) || !created.body?.task?.id) {
     answers.canWrite = false;
     note('Create a task', false, created ? `${why(created)}. The token may not be allowed to write.` : 'no answer');
@@ -202,18 +261,46 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
     return result;
   }
   answers.canWrite = true;
-  const original = created.body.task as ApiTask;
+  let original = created.body.task as ApiTask;
   result.createdId = String(original.id);
   note('Create a task', true, `created with status ${original.status}, ${describeFields(original)}`);
 
   try {
-    answers.nameVisibleAfterCreate = await io.ask(
-      `In Lunatask, find "${PROBE_NAME}" (it's in Next, scheduled a week today). Can you see it with that name?`,
-    );
+    const ignored = Object.keys(requested).filter((f) => JSON.stringify(original[f] ?? null) !== JSON.stringify(requested[f]));
+    answers.createKeepsFields = ignored.length === 0;
+    note('Create keeps what it was sent', answers.createKeepsFields, ignored.length ? `ignored: ${ignored.join(', ')}` : 'everything kept');
+    if (ignored.length) {
+      // Set them with an update, so the status test below starts from a task
+      // whose other fields aren't all defaults (otherwise "nothing else
+      // changed" would prove little).
+      const setup = Object.fromEntries(ignored.map((f) => [f, requested[f]]));
+      const updated = await call('PUT', `/tasks/${result.createdId}`, setup);
+      const stillWrong = ok(updated) && updated.body?.task
+        ? ignored.filter((f) => JSON.stringify(updated.body.task[f] ?? null) !== JSON.stringify(requested[f]))
+        : ignored;
+      note('An update sets what create ignored', stillWrong.length === 0, stillWrong.length ? `still not set: ${stillWrong.join(', ')}` : 'all set');
+      if (stillWrong.length) {
+        stop('Lunatask would not set those fields, even with an update.');
+        return result;
+      }
+      original = updated!.body.task as ApiTask;
+    }
+
+    const where =
+      `it's in ${listName(original.status)}` +
+      `${original.scheduled_on ? `, scheduled ${dayWords(String(original.scheduled_on))}` : ''}, in ${areaWords}. ` +
+      "Lunatask's search will also find it by name";
+    answers.nameVisibleAfterCreate = await io.ask(`In Lunatask, find "${PROBE_NAME}": ${where}. Can you see it with that name?`);
     if (!answers.nameVisibleAfterCreate) {
-      stop("names set through the API don't show in Lunatask, so we can't test whether they survive.");
+      answers.taskVisibleAfterCreate = await io.ask(`Can you see a task there with no name, or a garbled one, instead?`);
+      stop(
+        answers.taskVisibleAfterCreate
+          ? 'the task arrived, but its name did not — so names sent through the API do not show in Lunatask.'
+          : "the task can't be seen in Lunatask at all. It may not have synced to the app yet; try again in a few minutes.",
+      );
       return result;
     }
+    answers.taskVisibleAfterCreate = true;
 
     // ---- 3. Complete it ------------------------------------------------------
     io.say('\n3. Marking it completed (sending only {"status":"completed"})…');
@@ -277,7 +364,7 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
       return result;
     }
 
-    answers.nameSurvivesReopening = await io.ask(`In Lunatask, is "${PROBE_NAME}" back in ${capitalise(back)}, with its name intact?`);
+    answers.nameSurvivesReopening = await io.ask(`In Lunatask, is "${PROBE_NAME}" back in ${listName(back)}, with its name intact?`);
     if (!answers.nameSurvivesReopening) {
       stop('reopening through the API lost the name.');
       return result;
@@ -322,8 +409,13 @@ function describeFields(task: ApiTask): string {
   return KEPT_FIELDS.filter((f) => f !== 'area_id').map((f) => `${f} ${JSON.stringify(task[f] ?? null)}`).join(', ');
 }
 
-function capitalise(word: string): string {
-  return word.charAt(0).toUpperCase() + word.slice(1);
+function listName(status: string): string {
+  return LIST_NAMES[status] ?? status;
+}
+
+/** "2026-11-03" → "Tue 3 Nov" */
+function dayWords(date: string): string {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).replace(',', '');
 }
 
 function addDays(date: string, days: number): string {
@@ -343,6 +435,20 @@ async function main() {
     return;
   }
 
+  // The probe task an earlier run created and didn't delete, if any — the only
+  // task other than its own this probe will ever offer to delete.
+  const folder = resolve(join(import.meta.dirname, '..', 'data', 'lunatask-probe'));
+  let leftoverId: string | undefined;
+  let previousRanAt: string | undefined;
+  try {
+    const previous = JSON.parse(await readFile(join(folder, 'findings.json'), 'utf8'));
+    previousRanAt = previous.ranAt;
+    const candidate = previous.answers?.deleted === true ? null : previous.createdId;
+    if (typeof candidate === 'string' && /^[0-9a-f-]{36}$/i.test(candidate)) leftoverId = candidate;
+  } catch {
+    // no earlier run
+  }
+
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const now = new Date();
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -352,6 +458,7 @@ async function main() {
     fetch,
     today,
     areaId: process.env.LUNATASK_PROBE_AREA?.trim() || undefined,
+    leftoverId,
     say: (line) => console.log(line),
     ask: async (question) => {
       for (;;) {
@@ -363,8 +470,11 @@ async function main() {
   });
   rl.close();
 
-  const folder = resolve(join(import.meta.dirname, '..', 'data', 'lunatask-probe'));
   await mkdir(folder, { recursive: true });
+  // Keep the earlier run's findings under its own date rather than overwrite them.
+  if (previousRanAt) {
+    await rename(join(folder, 'findings.json'), join(folder, `findings-${previousRanAt.replace(/[:.]/g, '-')}.json`)).catch(() => {});
+  }
   const ranAt = now.toISOString();
   const { apiTasks, ...findings } = result;
   await writeFile(join(folder, 'findings.json'), JSON.stringify({ ranAt, ...findings }, null, 2) + '\n');

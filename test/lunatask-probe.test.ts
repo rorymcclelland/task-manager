@@ -39,6 +39,8 @@ interface Quirks {
   noShow?: boolean;
   /** Lunatask unreachable. */
   offline?: boolean;
+  /** Fields a create ignores (the real Lunatask ignored these on 28 Oct 2026). */
+  createIgnores?: string[];
 }
 
 function fakeLunatask(existing: FakeTask[], quirks: Quirks = {}) {
@@ -73,6 +75,7 @@ function fakeLunatask(existing: FakeTask[], quirks: Quirks = {}) {
       return t ? json(200, { task: visible(t) }) : json(404, { message: 'not found' });
     }
     if (method === 'POST') {
+      for (const field of quirks.createIgnores ?? []) delete body[field];
       const task: FakeTask = {
         id: `00000000-0000-4000-8000-00000000000${++counter}`,
         area_id: body.area_id,
@@ -128,11 +131,16 @@ function existingTask(id: string, status = 'next'): FakeTask {
 }
 
 /** Collects everything the probe prints, and answers its questions. */
-function io(fetchFn: typeof fetch, answers: boolean[] = []): ProbeIO & { lines: string[]; asked: string[] } {
+function io(
+  fetchFn: typeof fetch,
+  answers: boolean[] = [],
+  extra: Partial<ProbeIO> = {},
+): ProbeIO & { lines: string[]; asked: string[] } {
   const lines: string[] = [];
   const asked: string[] = [];
   let i = 0;
   return {
+    ...extra,
     fetch: fetchFn,
     today: '2026-10-27',
     lines,
@@ -146,6 +154,9 @@ function io(fetchFn: typeof fetch, answers: boolean[] = []): ProbeIO & { lines: 
 }
 
 const MINE = [existingTask('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), existingTask('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'completed')];
+const LEFTOVER = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const OLD_AREA = '22222222-2222-4222-8222-222222222222';
+const MAIN_AREA = '33333333-3333-4333-8333-333333333333';
 
 test('L0 — a well-behaved Lunatask: every question gets a yes', async () => {
   const lunatask = fakeLunatask(MINE);
@@ -165,6 +176,9 @@ test('L0 — a well-behaved Lunatask: every question gets a yes', async () => {
     unknownIdAnswer: 404,
     invalidStatusAnswer: 422,
     deleted: true,
+    createKeepsFields: true,
+    taskVisibleAfterCreate: true,
+    leftoverDeleted: null,
   });
   assert.equal(lunatask.tasks.size, 2, 'the probe task is gone; your tasks are untouched');
 });
@@ -176,7 +190,7 @@ test('L0 — it only ever changes the task it created (plus one made-up ID)', as
   for (const write of lunatask.writes) {
     assert.ok(!yours.has(write.id), `wrote to one of your tasks: ${write.method} ${write.id}`);
     assert.ok(
-      write.id === '(new)' || write.id === result.createdId || write.id === result.unknownId,
+      write.id === '(new)' || write.id === result.createdId || write.id === result.unknownId || write.id === LEFTOVER,
       `wrote somewhere unexpected: ${write.method} ${write.id}`,
     );
   }
@@ -187,6 +201,7 @@ test('L0 — status updates send only the status', async () => {
   const lunatask = fakeLunatask(MINE);
   await runProbe(TOKEN, io(lunatask.fetchFn));
   const statusUpdates = lunatask.writes.filter((w) => w.method === 'PUT');
+  // (With a well-behaved create there's no setup update, so every PUT is a status change.)
   assert.ok(statusUpdates.length >= 3);
   for (const write of statusUpdates) assert.deepEqual(Object.keys(write.body as object), ['status']);
 });
@@ -285,4 +300,99 @@ test('L0 — saying no to deleting leaves the probe task for you to delete', asy
   assert.equal(result.answers.deleted, false);
   assert.equal(lunatask.tasks.size, 3);
   assert.match(probe.lines.join('\n'), /delete it yourself/i);
+});
+
+// ---- Second run, after the 28 Oct findings ------------------------------------
+// The first real run showed: Lunatask ignored status, motivation and quadrant on
+// create; and the probe borrowed the area of the first task listed — a completed
+// task in an area Rory doesn't look at — so the task couldn't be found.
+
+test('L0 — the probe task goes in the area holding most of your open tasks', async () => {
+  const tasks = [
+    { ...existingTask('d1', 'completed'), area_id: OLD_AREA }, // listed first, as on 28 Oct
+    { ...existingTask('d2', 'completed'), area_id: OLD_AREA },
+    { ...existingTask('d3', 'next'), area_id: OLD_AREA },
+    { ...existingTask('d4', 'next'), area_id: MAIN_AREA },
+    { ...existingTask('d5', 'later'), area_id: MAIN_AREA },
+  ];
+  const lunatask = fakeLunatask(tasks);
+  const probe = io(lunatask.fetchFn);
+  const result = await runProbe(TOKEN, probe);
+  const created = lunatask.writes.find((w) => w.method === 'POST');
+  assert.equal((created?.body as { area_id: string }).area_id, MAIN_AREA);
+  assert.ok(result.createdId);
+  assert.match(probe.lines.join('\n'), /area with the most open tasks \(2 open\)/);
+});
+
+test('L0 — LUNATASK_PROBE_AREA overrides the choice of area', async () => {
+  const lunatask = fakeLunatask(MINE);
+  await runProbe(TOKEN, io(lunatask.fetchFn, [], { areaId: MAIN_AREA }));
+  const created = lunatask.writes.find((w) => w.method === 'POST');
+  assert.equal((created?.body as { area_id: string }).area_id, MAIN_AREA);
+});
+
+test('L0 — fields a create ignores are recorded, set by an update, and the probe carries on', async () => {
+  const lunatask = fakeLunatask(MINE, { createIgnores: ['status', 'motivation', 'eisenhower'] });
+  const probe = io(lunatask.fetchFn);
+  const result = await runProbe(TOKEN, probe);
+  assert.equal(result.answers.createKeepsFields, false);
+  const finding = result.findings.find((f) => /create keeps/i.test(f.step));
+  assert.ok(finding && /status, motivation, eisenhower/.test(finding.detail), finding?.detail);
+  // One setup update with exactly the ignored fields, then status-only updates.
+  const puts = lunatask.writes.filter((w) => w.method === 'PUT');
+  assert.deepEqual(puts[0].body, { status: 'next', motivation: 'should', eisenhower: 3 });
+  for (const write of puts.slice(1)) assert.deepEqual(Object.keys(write.body as object), ['status']);
+  assert.equal(result.answers.statusOnlyLeavesOtherFields, true);
+  assert.equal(result.stoppedEarly, false);
+});
+
+test('L0 — it says where the task actually is, from what Lunatask recorded', async () => {
+  const lunatask = fakeLunatask(MINE, { createIgnores: ['status'] });
+  const probe = io(lunatask.fetchFn);
+  await runProbe(TOKEN, probe);
+  // Asked after the setup update has put it in Next; the question names the
+  // list and the date it really has, and suggests Lunatask's search.
+  assert.match(probe.asked[0], /Next/);
+  assert.match(probe.asked[0], /Tue 3 Nov/);
+  assert.match(probe.asked[0], /search/i);
+});
+
+test("L0 — 'can't see the name' is followed by 'can you see the task at all?'", async () => {
+  // Answers: name visible? no · task visible without a name? yes · delete? yes
+  const probe = io(fakeLunatask(MINE).fetchFn, [false, true, true]);
+  const result = await runProbe(TOKEN, probe);
+  assert.equal(result.answers.nameVisibleAfterCreate, false);
+  assert.equal(result.answers.taskVisibleAfterCreate, true);
+  assert.equal(result.stoppedEarly, true);
+  assert.equal(result.answers.deleted, true);
+  assert.equal(probe.asked.length, 3);
+});
+
+test('L0 — the leftover task from an earlier run is offered for deletion first', async () => {
+  const leftover = { ...existingTask(LEFTOVER, 'later'), area_id: OLD_AREA, scheduled_on: '2026-11-04' };
+  const lunatask = fakeLunatask([...MINE, leftover]);
+  const probe = io(lunatask.fetchFn, [], { leftoverId: LEFTOVER });
+  const result = await runProbe(TOKEN, probe);
+  assert.match(probe.asked[0], /earlier run/i);
+  assert.match(probe.asked[0], /Wed 4 Nov/);
+  assert.equal(result.answers.leftoverDeleted, true);
+  assert.ok(!lunatask.tasks.has(LEFTOVER));
+  // The leftover only ever gets a DELETE, nothing else.
+  assert.deepEqual(lunatask.writes.filter((w) => w.id === LEFTOVER).map((w) => w.method), ['DELETE']);
+});
+
+test('L0 — a leftover that is already gone is reported, not an error', async () => {
+  const probe = io(fakeLunatask(MINE).fetchFn, [], { leftoverId: LEFTOVER });
+  const result = await runProbe(TOKEN, probe);
+  assert.equal(result.answers.leftoverDeleted, null);
+  assert.match(probe.lines.join('\n'), /already gone/i);
+  assert.equal(result.stoppedEarly, false);
+});
+
+test('L0 — keeping the leftover is allowed', async () => {
+  const leftover = { ...existingTask(LEFTOVER, 'later') };
+  const lunatask = fakeLunatask([...MINE, leftover]);
+  const result = await runProbe(TOKEN, io(lunatask.fetchFn, [false], { leftoverId: LEFTOVER }));
+  assert.equal(result.answers.leftoverDeleted, false);
+  assert.ok(lunatask.tasks.has(LEFTOVER));
 });

@@ -236,3 +236,36 @@ Given by Rory on 26 October 2026; all as recommended.
 **L0 is Ready, Sprint 1:** test steps agreed, questions answered,
 boundaries checked (one throwaway task, export read on the PC only), and it
 depends on nothing. Building starts when Rory says go.
+
+## Spike log
+
+**Run 1, 28 Oct 2026 07:41.** Stopped early, mostly on mistakes in the probe.
+
+- **Reading works.** 389 tasks came back in one reply, with no paging (130
+  open, 260 completed).
+- **The token can write.** The probe task was created.
+- **Create ignores some fields.** Lunatask kept `priority` and
+  `scheduled_on`, but created the task in `later`, with motivation and
+  quadrant unset, whatever was sent. That matters for L1 only if we ever
+  create tasks, which is out of scope, but it is worth recording in D20.
+- **Two probe faults hid the name test.** The task went into the area of the
+  first task listed, a completed task in an area Rory doesn't use. And the
+  question said "it's in Next" because it assumed the create had kept the
+  status. Rory couldn't find the task at all, so `nameVisibleAfterCreate: no`
+  is not evidence either way.
+- **One leftover.** The probe task stayed in Lunatask, in Later, scheduled
+  Wed 4 Nov.
+
+**Fixes for run 2** (tests first; 8 new tests):
+
+- Put the task in the area with the most open tasks, unless
+  `LUNATASK_PROBE_AREA` says otherwise.
+- Record which fields a create ignores, and set them with one update, so the
+  status-only test starts from non-default values.
+- Describe where the task is from what Lunatask recorded, and mention
+  Lunatask's search.
+- If the name isn't visible, ask whether the task is visible at all, so a
+  missing name can be told apart from a missing task.
+- Offer to delete run 1's leftover first. Only the ID run 1 recorded creating
+  can be deleted, and nothing else is ever sent to it.
+- Keep each run's findings, rather than overwriting them.
