@@ -292,3 +292,29 @@ had just taken a while to sync from the API to the Lunatask app.
 - **Commits** are back under Rory's name with Claude as co-author, as the
   working agreement says. Commits from 26 Oct to 28 Oct went out under
   Claude's name.
+
+**Independent review, 5 Nov 2026.** An agent that didn't build the probe
+reviewed it before its first unattended run against Rory's Lunatask. It found
+1 high, 4 medium and 4 low problems. All are fixed, each with a test written
+first:
+
+- **High:** probe tasks were saved to the record only when the run finished,
+  so a crash would lose them. Each is now saved the moment it exists, and
+  errors mid-run end the run cleanly.
+- **Medium:**
+  - The probe now acts only on IDs a create returns that are new and shaped
+    like task IDs.
+  - The write guard is now exact: the whole list can only be read or added
+    to, and a write must go to `/tasks/<allowed ID>`.
+  - An unreadable record file stops the run instead of being reset.
+  - The guards are now tested directly.
+- **Low:**
+  - An unclear create failure says the task may exist.
+  - A task made by the made-up-ID update is put on record.
+  - An accepted invalid status is reported, and B's real status is shown.
+  - Run 1's task isn't brought back after clean-up.
+  - Errors are scrubbed of the token, and the wording is accurate.
+
+To prove the tests guard what they claim, each of eight guards was removed
+in turn from a throwaway copy, and each removal fails at least one test.
+41 probe tests, 195 in all.

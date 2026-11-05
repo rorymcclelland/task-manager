@@ -39,7 +39,7 @@
 //   - Results go to data/lunatask-probe/ (data/ is never committed).
 
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -59,6 +59,9 @@ export interface ProbeIO {
   today: string;
   /** Area to create the probe tasks in, if you'd rather choose one. */
   areaId?: string;
+  /** Called the moment a probe task exists, before any other request, so it
+   *  is on record for clean-up even if the run is interrupted. */
+  onCreated?: (task: ProbeTask) => Promise<void>;
 }
 
 export interface Finding {
@@ -88,7 +91,8 @@ export interface Answers {
 
 /** A probe task, and where it ended up, for the test pack. */
 export interface ProbeTask {
-  label: 'A' | 'B';
+  /** 'unknown': a task Lunatask made from the update to a made-up ID. */
+  label: 'A' | 'B' | 'unknown';
   id: string;
   name: string;
   status: string;
@@ -147,14 +151,19 @@ interface Reply {
   body: any;
 }
 
-/** An API client that never lets the token reach anything printed, and that
- *  refuses a write to any task not on its allowed list. */
-function client(token: string, io: ProbeIO, allowedWrites: Set<string>, note: (step: string, ok: boolean, detail: string) => void) {
-  const call = async (method: string, path: string, body?: unknown): Promise<Reply | null> => {
-    if (method !== 'GET' && path !== '/tasks') {
-      const id = path.split('/')[2];
-      if (!allowedWrites.has(id)) throw new Error(`Refusing to ${method} a task this probe didn't create`);
+/** An API client that refuses a write to any task not on its allowed list,
+ *  and any ID not shaped like a task ID. Exported for its tests: it is the
+ *  backstop behind every other check. */
+export function client(token: string, io: ProbeIO, allowedWrites: Set<string>, note: (step: string, ok: boolean, detail: string) => void) {
+  /** `id` null means the task list itself: only reading it, or creating a task in it. */
+  const call = async (method: string, id: string | null, body?: unknown): Promise<Reply | null> => {
+    if (id === null) {
+      if (method !== 'GET' && method !== 'POST') throw new Error(`Refusing to ${method} the whole task list`);
+    } else {
+      if (!TASK_ID.test(id)) throw new Error(`Refusing to use ${JSON.stringify(id)}: not a task ID`);
+      if (method !== 'GET' && !allowedWrites.has(id)) throw new Error(`Refusing to ${method} a task this probe didn't create`);
     }
+    const path = id === null ? '/tasks' : `/tasks/${encodeURIComponent(id)}`;
     try {
       const response = await io.fetch(`${API}${path}`, {
         method,
@@ -226,9 +235,19 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
     return result;
   };
 
+  try {
+    return await steps();
+  } catch (error) {
+    // Anything unexpected ends the run cleanly. Every probe task created so
+    // far is already on record (onCreated), so clean-up can still find it.
+    note('Unexpected error', false, (error as Error).message);
+    return stop('something unexpected happened.');
+  }
+
+  async function steps(): Promise<ProbeResult> {
   // ---- 1. Read ---------------------------------------------------------------
   io.say('1. Reading your Lunatask task list (IDs and statuses only)…');
-  const list = await call('GET', '/tasks');
+  const list = await call('GET', null);
   if (!ok(list) || !Array.isArray(list.body?.tasks)) {
     answers.canRead = false;
     if (list) {
@@ -274,17 +293,32 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
 
   for (const label of ['A', 'B'] as const) {
     io.say(`\n${label === 'A' ? 2 : 3}. Creating "${PROBE_NAMES[label]}" in ${result.areaWords}…`);
-    const created = await call('POST', '/tasks', { name: PROBE_NAMES[label], area_id: areaId, ...requested });
-    if (!ok(created) || !created.body?.task?.id) {
+    const created = await call('POST', null, { name: PROBE_NAMES[label], area_id: areaId, ...requested });
+    const byHand = `Check Lunatask for "${PROBE_NAMES[label]}" and, if it's there, delete it by hand.`;
+    if (created && created.status >= 400 && created.status < 500) {
       answers.canWrite = false;
-      note(`Create task ${label}`, false, created ? `${why(created)}. The token may not be allowed to write.` : 'no answer');
+      note(`Create task ${label}`, false, `${why(created)}. The token may not be allowed to write.`);
       return stop('a task could not be created.');
+    }
+    if (!ok(created) || !created.body?.task?.id) {
+      // No answer, a server error or a reply without a task: it may exist anyway.
+      note(`Create task ${label}`, false, `${created ? why(created) : 'no answer'}; the task may have been created. ${byHand}`);
+      return stop('a create gave no usable answer.');
     }
     answers.canWrite = true;
     let task = created.body.task as ApiTask;
-    allowedWrites.add(String(task.id));
-    const record: ProbeTask = { label, id: String(task.id), name: PROBE_NAMES[label], status: task.status, scheduledOn: task.scheduled_on ?? null };
+    const id = task.id;
+    // Only ever act on an ID that is new, and shaped like a task ID. A create
+    // that answered with one of your existing tasks (an upsert, or a bug) must
+    // not lead to that task being completed, or later deleted.
+    if (typeof id !== 'string' || !TASK_ID.test(id) || result.apiTasks.some((t) => t.id === id) || allowedWrites.has(id)) {
+      note(`Create task ${label}`, false, `Lunatask answered with an ID that isn't a new task ID (${JSON.stringify(id)}); nothing was sent to it. ${byHand}`);
+      return stop('the create answered with an ID the probe could not trust.');
+    }
+    allowedWrites.add(id);
+    const record: ProbeTask = { label, id, name: PROBE_NAMES[label], status: task.status, scheduledOn: task.scheduled_on ?? null };
     result.created.push(record);
+    await io.onCreated?.(record);
     note(`Create task ${label}`, true, `created with status ${task.status}, ${describeFields(task)}`);
 
     const ignored = Object.keys(requested).filter((f) => JSON.stringify(task[f] ?? null) !== JSON.stringify(requested[f]));
@@ -296,7 +330,7 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
       // Set them with an update, so B's status test starts from a task whose
       // other fields aren't all defaults (otherwise "nothing else changed"
       // would prove little), and so A and B end up in the same place.
-      const updated = await call('PUT', `/tasks/${record.id}`, Object.fromEntries(ignored.map((f) => [f, requested[f]])));
+      const updated = await call('PUT', record.id, Object.fromEntries(ignored.map((f) => [f, requested[f]])));
       const stillWrong = ok(updated) && updated.body?.task
         ? ignored.filter((f) => JSON.stringify(updated.body.task[f] ?? null) !== JSON.stringify(requested[f]))
         : ignored;
@@ -314,7 +348,7 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
   const b = result.created[1];
   const original = tasks.B!;
   io.say('\n4. Completing B (sending only {"status":"completed"})…');
-  const completed = await call('PUT', `/tasks/${b.id}`, { status: 'completed' });
+  const completed = await call('PUT', b.id, { status: 'completed' });
   if (!ok(completed) || !completed.body?.task) {
     note('Complete B', false, completed ? why(completed) : 'no answer');
     return stop('completing through the API failed.');
@@ -340,7 +374,7 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
     return stop('completing changed more (or less) than it should.');
   }
 
-  const shown = await call('GET', `/tasks/${b.id}`);
+  const shown = await call('GET', b.id);
   const shownStatus = ok(shown) ? shown.body?.task?.status : null;
   answers.singleTaskRead = shownStatus === 'completed';
   note(
@@ -351,7 +385,7 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
 
   const back = afterComplete.previous_status || String(REQUESTED.status);
   io.say(`\n5. Reopening B (sending only {"status":"${back}"})…`);
-  const reopened = await call('PUT', `/tasks/${b.id}`, { status: back });
+  const reopened = await call('PUT', b.id, { status: back });
   if (!ok(reopened) || !reopened.body?.task) {
     note('Reopen B', false, reopened ? why(reopened) : 'no answer');
     return stop('reopening through the API failed.');
@@ -372,16 +406,30 @@ export async function runProbe(token: string, io: ProbeIO): Promise<ProbeResult>
   io.say('\n6. Checking how Lunatask answers mistakes…');
   result.unknownId = randomUUID();
   allowedWrites.add(result.unknownId);
-  const unknown = await call('PUT', `/tasks/${result.unknownId}`, { status: 'completed' });
+  const unknown = await call('PUT', result.unknownId, { status: 'completed' });
   answers.unknownIdAnswer = unknown?.status ?? null;
+  if (ok(unknown)) {
+    // Lunatask made a task from it. Put it on record so clean-up removes it.
+    const made: ProbeTask = { label: 'unknown', id: result.unknownId, name: '(no name: made by an update)', status: String(unknown.body?.task?.status ?? 'completed'), scheduledOn: null };
+    result.created.push(made);
+    await io.onCreated?.(made);
+    note('Update a task that does not exist', false, `${why(unknown)}: it created a task, now on record for clean-up`);
+    return stop('an update to an unknown ID created a task.');
+  }
   note('Update a task that does not exist', true, unknown ? why(unknown) : 'no answer');
 
-  const invalid = await call('PUT', `/tasks/${b.id}`, { status: 'finished' });
+  const invalid = await call('PUT', b.id, { status: 'finished' });
   answers.invalidStatusAnswer = invalid?.status ?? null;
-  note('Update with an invalid status', !ok(invalid), invalid ? why(invalid) : 'no answer');
+  if (ok(invalid)) {
+    b.status = String(invalid.body?.task?.status ?? 'finished');
+    note('Update with an invalid status', false, `${why(invalid)}: accepted, and B's status is now ${b.status}`);
+    return stop('Lunatask accepted an invalid status.');
+  }
+  note('Update with an invalid status', true, invalid ? why(invalid) : 'no answer');
 
   io.say('\nDone: every API step answered. One hand check left (the test pack).');
   return result;
+  }
 }
 
 // ---- Clean-up ---------------------------------------------------------------------
@@ -397,7 +445,7 @@ export async function cleanupProbe(token: string, io: ProbeIO, ids: string[]): P
   const { call, why } = client(token, io, new Set(valid), note);
 
   for (const id of valid) {
-    const reply: Reply | null = await call('DELETE', `/tasks/${id}`);
+    const reply: Reply | null = await call('DELETE', id);
     const status = reply?.status ?? 0;
     if (status >= 200 && status < 300) {
       result.deleted.push(id);
@@ -483,9 +531,63 @@ function addDays(date: string, days: number): string {
 
 // ---- Run from the command line ----------------------------------------------------------
 
-interface ProbeRecord {
+export interface ProbeRecord {
   /** Probe tasks made and not yet confirmed deleted. */
   pending: { id: string; label: string; createdAt: string }[];
+  /** Probe task IDs confirmed deleted (or already gone). */
+  done: string[];
+}
+
+const RECORD_FILE = 'probe-tasks.json';
+
+/** Read the record. Missing: start empty. Unreadable: stop, and leave the
+ *  file alone, rather than lose track of probe tasks still to delete. */
+export async function loadRecord(folder: string): Promise<ProbeRecord> {
+  const file = join(folder, RECORD_FILE);
+  let text: string;
+  try {
+    text = await readFile(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { pending: [], done: [] };
+    throw new Error(`Can't read ${file}: ${(error as Error).message}`);
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${file} isn't valid JSON (${(error as Error).message}). Nothing was changed; fix or remove it.`);
+  }
+  const pending = parsed?.pending;
+  if (!Array.isArray(pending) || !pending.every((p: any) => typeof p?.id === 'string')) {
+    throw new Error(`${file} has no valid "pending" list. Nothing was changed; fix or remove it.`);
+  }
+  const done = Array.isArray(parsed.done) ? parsed.done.filter((d: unknown) => typeof d === 'string') : [];
+  return { pending, done };
+}
+
+/** Write the record whole: to a temporary file, then renamed into place. */
+export async function saveRecord(folder: string, record: ProbeRecord): Promise<void> {
+  const file = join(folder, RECORD_FILE);
+  await writeFile(`${file}.tmp`, JSON.stringify(record, null, 2) + '\n');
+  await rename(`${file}.tmp`, file);
+}
+
+/** Run 1 (28 Oct 2026) recorded its task in findings.json. Bring it in, once. */
+export function mergeRun1(record: ProbeRecord, run1: any): ProbeRecord {
+  const id = run1?.createdId;
+  if (typeof id !== 'string' || run1.answers?.deleted === true) return record;
+  if (record.pending.some((p) => p.id === id) || record.done.includes(id)) return record;
+  return { ...record, pending: [...record.pending, { id, label: 'run 1', createdAt: String(run1.ranAt) }] };
+}
+
+/** After clean-up: deleted and already-gone IDs are done; failed and refused
+ *  ones stay on record (refused ones are reported each time). */
+export function applyCleanup(record: ProbeRecord, result: CleanupResult): ProbeRecord {
+  const finished = new Set([...result.deleted, ...result.alreadyGone]);
+  return {
+    pending: record.pending.filter((p) => !finished.has(p.id)),
+    done: [...record.done, ...finished],
+  };
 }
 
 async function main() {
@@ -498,13 +600,9 @@ async function main() {
 
   const folder = resolve(join(import.meta.dirname, '..', 'data', 'lunatask-probe'));
   await mkdir(folder, { recursive: true });
-  const recordFile = join(folder, 'probe-tasks.json');
-  const record: ProbeRecord = await readFile(recordFile, 'utf8').then((t) => JSON.parse(t)).catch(() => ({ pending: [] }));
-  // Run 1 (28 Oct 2026) recorded its task in findings.json; bring it in once.
   const run1 = await readFile(join(folder, 'findings.json'), 'utf8').then((t) => JSON.parse(t)).catch(() => null);
-  if (run1?.createdId && run1.answers?.deleted !== true && !record.pending.some((p) => p.id === run1.createdId)) {
-    record.pending.push({ id: run1.createdId, label: 'run 1', createdAt: run1.ranAt });
-  }
+  let record = mergeRun1(await loadRecord(folder), run1);
+  await saveRecord(folder, record);
 
   const now = new Date();
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -515,29 +613,35 @@ async function main() {
   if (process.argv.includes('--cleanup')) {
     console.log(`Lunatask probe clean-up: deleting ${record.pending.length} probe task(s) it made.\n`);
     const result = await cleanupProbe(token, io, record.pending.map((p) => p.id));
-    const keep = new Set(result.failed);
-    record.pending = record.pending.filter((p) => keep.has(p.id));
-    await writeFile(recordFile, JSON.stringify(record, null, 2) + '\n');
+    record = applyCleanup(record, result);
+    await saveRecord(folder, record);
     await writeFile(join(folder, `cleanup-${stamp}.json`), JSON.stringify({ ranAt, ...result }, null, 2) + '\n');
-    console.log(`\n${result.deleted.length} deleted, ${result.alreadyGone.length} already gone, ${result.failed.length} still to delete.`);
+    console.log(`\n${result.deleted.length} deleted, ${result.alreadyGone.length} already gone, ${record.pending.length} still on record.`);
     return;
   }
 
   console.log('Lunatask probe (Sprint 1 spike). It changes only tasks it creates itself.\n');
-  const result = await runProbe(token, io);
-  for (const task of result.created) record.pending.push({ id: task.id, label: task.label, createdAt: ranAt });
-  await writeFile(recordFile, JSON.stringify(record, null, 2) + '\n');
+  const result = await runProbe(token, {
+    ...io,
+    // Saved to disk the moment each task exists (review H1).
+    onCreated: async (task) => {
+      record = { ...record, pending: [...record.pending, { id: task.id, label: task.label, createdAt: ranAt }] };
+      await saveRecord(folder, record);
+    },
+  });
 
   const { apiTasks, ...findings } = result;
   await writeFile(join(folder, `run-${stamp}.json`), JSON.stringify({ ranAt, ...findings }, null, 2) + '\n');
   await writeFile(join(folder, 'api-task-ids.json'), JSON.stringify({ ranAt, tasks: apiTasks }, null, 2) + '\n');
   await writeFile(join(folder, 'test-pack.md'), testPack(result, ranAt));
-  console.log(`\nSaved to ${folder}: run-${stamp}.json, api-task-ids.json, test-pack.md. Nothing there is task text.`);
+  console.log(`\nSaved to ${folder}: run-${stamp}.json, api-task-ids.json, test-pack.md. None of it is your task text.`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
-    console.error(`The probe stopped unexpectedly: ${error.message}`);
+    const token = process.env.LUNATASK_TOKEN?.trim();
+    const message = String(error?.message ?? error);
+    console.error(`The probe stopped unexpectedly: ${token ? message.split(token).join('***') : message}`);
     process.exitCode = 1;
   });
 }

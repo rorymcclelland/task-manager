@@ -18,7 +18,22 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanupProbe, PROBE_NAMES, runProbe, testPack, type ProbeIO } from '../scripts/lunatask-probe.ts';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  applyCleanup,
+  cleanupProbe,
+  client,
+  loadRecord,
+  mergeRun1,
+  PROBE_NAMES,
+  runProbe,
+  saveRecord,
+  testPack,
+  type ProbeIO,
+  type ProbeTask,
+} from '../scripts/lunatask-probe.ts';
 
 const TOKEN = 'secret-token-123';
 const OLD_AREA = '22222222-2222-4222-8222-222222222222';
@@ -52,6 +67,20 @@ interface Quirks {
   createIgnores?: string[];
   /** An update can't set these either. */
   updateIgnores?: string[];
+  /** Create answers with this ID instead of a fresh one (an upsert, or a bug). */
+  postReturnsId?: string;
+  /** Create answers 500, or with no task, though the task may exist. */
+  postFails?: 'server-error' | 'malformed';
+  /** Error answers repeat the Authorization header back. */
+  echoToken?: boolean;
+  /** A thrown network error whose message includes the token. */
+  throwWithToken?: boolean;
+  /** An update to an unknown ID creates it (2xx). */
+  upsertUnknown?: boolean;
+  /** An invalid status is accepted. */
+  acceptInvalidStatus?: boolean;
+  /** Called after each request, for tests that interrupt the run. */
+  afterRequest?: (method: string) => void;
 }
 
 function fakeLunatask(existing: FakeTask[], quirks: Quirks = {}) {
@@ -66,15 +95,28 @@ function fakeLunatask(existing: FakeTask[], quirks: Quirks = {}) {
     return rest;
   };
 
+  const requests: { method: string; url: string }[] = [];
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     if (quirks.offline) throw new TypeError('fetch failed');
+    const headers = init?.headers as Record<string, string>;
+    if (quirks.throwWithToken) throw new TypeError(`fetch failed for ${headers.Authorization}`);
     const url = new URL(String(input));
     const method = init?.method ?? 'GET';
-    const headers = init?.headers as Record<string, string>;
-    if (headers.Authorization !== `bearer ${TOKEN}`) return json(401, { message: 'unauthorized' });
+    requests.push({ method, url: String(input) });
+    try {
+      return await handle(url, method, headers, init);
+    } finally {
+      quirks.afterRequest?.(method);
+    }
+  }) as typeof fetch;
+
+  const handle = async (url: URL, method: string, headers: Record<string, string>, init?: RequestInit) => {
+    if (headers.Authorization !== `bearer ${TOKEN}`) {
+      return json(401, { message: quirks.echoToken ? `unauthorized: ${headers.Authorization}` : 'unauthorized' });
+    }
     assert.equal(url.origin, 'https://api.lunatask.app');
 
-    const [, , , id] = url.pathname.split('/'); // /v1/tasks/<id>
+    const id = url.pathname.split('/').slice(3).map(decodeURIComponent).join('/') || undefined; // /v1/tasks/<id>
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     if (method !== 'GET') writes.push({ method, id: id ?? '(new)', body: body && { ...body } });
     if (method !== 'GET' && quirks.readOnlyToken) return json(403, { message: 'forbidden' });
@@ -82,13 +124,14 @@ function fakeLunatask(existing: FakeTask[], quirks: Quirks = {}) {
     if (method === 'GET' && !id) return json(200, { tasks: [...tasks.values()].map(visible) });
     if (method === 'GET') {
       if (quirks.noShow) return json(404, { message: 'not found' });
-      const t = tasks.get(id);
+      const t = tasks.get(id!);
       return t ? json(200, { task: visible(t) }) : json(404, { message: 'not found' });
     }
     if (method === 'POST') {
       for (const field of quirks.createIgnores ?? []) delete body[field];
+      if (quirks.postFails === 'server-error') return json(500, { message: 'server error' });
       const task: FakeTask = {
-        id: `00000000-0000-4000-8000-00000000000${++counter}`,
+        id: quirks.postReturnsId ?? `00000000-0000-4000-8000-00000000000${++counter}`,
         area_id: body.area_id,
         status: body.status ?? 'later',
         previous_status: null,
@@ -99,17 +142,23 @@ function fakeLunatask(existing: FakeTask[], quirks: Quirks = {}) {
         completed_at: null,
         name: body.name,
       };
+      if (quirks.postReturnsId && tasks.has(task.id)) return json(200, { task: visible(tasks.get(task.id)!) });
       tasks.set(task.id, task);
+      if (quirks.postFails === 'malformed') return json(200, { ok: true });
       return json(200, { task: visible(task) });
     }
-    const t = tasks.get(id);
-    if (!t) return json(404, { message: 'not found' });
+    let t = tasks.get(id!);
+    if (!t && method === 'PUT' && quirks.upsertUnknown) {
+      t = { ...existingTask(id!), name: undefined };
+      tasks.set(id!, t);
+    }
+    if (!t) return json(404, { message: quirks.echoToken ? `no task (auth ${headers.Authorization})` : 'not found' });
     if (method === 'DELETE') {
-      tasks.delete(id);
+      tasks.delete(id!);
       return json(200, { task: visible(t) });
     }
     if (method === 'PUT') {
-      if (body.status && !['later', 'next', 'started', 'waiting', 'completed'].includes(body.status)) {
+      if (body.status && !quirks.acceptInvalidStatus && !['later', 'next', 'started', 'waiting', 'completed'].includes(body.status)) {
         return json(422, { message: 'invalid status' });
       }
       for (const field of quirks.updateIgnores ?? []) delete body[field];
@@ -118,13 +167,13 @@ function fakeLunatask(existing: FakeTask[], quirks: Quirks = {}) {
         : t;
       const next: FakeTask = { ...base, ...body, previous_status: body.status ? t.status : t.previous_status };
       next.completed_at = next.status === 'completed' && !quirks.noCompletedAt ? '2026-11-05T17:00:00Z' : null;
-      tasks.set(id, next);
+      tasks.set(id!, next);
       return json(200, { task: visible(next) });
     }
     return json(405, {});
-  }) as typeof fetch;
+  };
 
-  return { fetchFn, tasks, writes };
+  return { fetchFn, tasks, writes, requests };
 }
 
 function existingTask(id: string, status = 'next', area = MAIN_AREA): FakeTask {
@@ -388,4 +437,205 @@ test('L0 — clean-up offline keeps the IDs as failed, to try again', async () =
   const id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   const cleanup = await cleanupProbe(TOKEN, io(fakeLunatask(MINE, { offline: true }).fetchFn), [id]);
   assert.deepEqual(cleanup.failed, [id]);
+});
+
+// ---- After the independent review (5 Nov 2026) --------------------------------------
+// Each of these fails if the guard it names is removed.
+
+test('review H1 — each probe task is recorded the moment it is created, before any other call', async () => {
+  const recorded: string[] = [];
+  let callsSinceCreate = 0;
+  const lunatask = fakeLunatask(MINE, {
+    afterRequest: (method) => {
+      if (method === 'POST') callsSinceCreate = 0;
+      else callsSinceCreate++;
+    },
+  });
+  await runProbe(TOKEN, io(lunatask.fetchFn, {
+    onCreated: async (task: ProbeTask) => {
+      assert.equal(callsSinceCreate, 0, 'recorded before the next request');
+      recorded.push(task.id);
+    },
+  }));
+  assert.equal(recorded.length, 2);
+});
+
+test('review H1 — an exception mid-run is caught: the run stops, created tasks stay on record', async () => {
+  let posts = 0;
+  const lunatask = fakeLunatask(MINE, {
+    afterRequest: (method) => {
+      if (method === 'POST' && ++posts === 2) throw new Error('interrupted');
+    },
+  });
+  const recorded: string[] = [];
+  const result = await runProbe(TOKEN, io(lunatask.fetchFn, { onCreated: async (t) => void recorded.push(t.id) }));
+  assert.equal(result.stoppedEarly, true);
+  assert.equal(recorded.length, 1, 'A was recorded; B never came back');
+  assert.deepEqual(result.created.map((t) => t.id), recorded);
+});
+
+test('review M1 — a create that answers with one of your existing IDs is not touched or recorded', async () => {
+  const lunatask = fakeLunatask(MINE, { postReturnsId: MINE[0].id });
+  const recorded: string[] = [];
+  const probe = io(lunatask.fetchFn, { onCreated: async (t) => void recorded.push(t.id) });
+  const result = await runProbe(TOKEN, probe);
+  assert.equal(result.stoppedEarly, true);
+  assert.deepEqual(recorded, []);
+  assert.ok(!lunatask.writes.some((w) => w.id === MINE[0].id), 'never wrote to your task');
+  assert.deepEqual(lunatask.tasks.get(MINE[0].id), MINE[0]);
+  assert.match(probe.lines.join('\n'), /delete it by hand/i);
+});
+
+test('review M1/M2 — a create that answers with a path-like ID: nothing is sent to it', async () => {
+  for (const bad of ['..', 'x/../../y', '%2e%2e', '']) {
+    const lunatask = fakeLunatask(MINE, { postReturnsId: bad });
+    const result = await runProbe(TOKEN, io(lunatask.fetchFn));
+    assert.equal(result.stoppedEarly, true, `id ${JSON.stringify(bad)}`);
+    assert.equal(result.created.length, 0);
+    const afterPost = lunatask.requests.slice(lunatask.requests.findIndex((r) => r.method === 'POST') + 1);
+    assert.deepEqual(afterPost.filter((r) => r.method !== 'GET'), [], `id ${JSON.stringify(bad)}`);
+  }
+});
+
+test('review M2 — the URL for a task always ends /v1/tasks/<that exact ID>', async () => {
+  const lunatask = fakeLunatask(MINE);
+  await runProbe(TOKEN, io(lunatask.fetchFn));
+  for (const r of lunatask.requests) {
+    assert.match(r.url, /^https:\/\/api\.lunatask\.app\/v1\/tasks(\/[0-9a-f-]{36})?$/, r.url);
+    if (r.url.endsWith('/tasks')) assert.ok(['GET', 'POST'].includes(r.method), `${r.method} on the whole list`);
+  }
+});
+
+test('review M3 — the token is scrubbed even when Lunatask repeats it back', async () => {
+  // The update to a made-up ID gets a 404 whose message repeats the token,
+  // and the probe prints that message.
+  const probe = io(fakeLunatask(MINE, { echoToken: true }).fetchFn);
+  const result = await runProbe(TOKEN, probe);
+  const everything = JSON.stringify({ lines: probe.lines, result });
+  assert.ok(everything.includes('***'), 'the echoed token was seen and scrubbed');
+  assert.ok(!everything.includes(TOKEN));
+
+  const wrong = io(fakeLunatask(MINE, { echoToken: true }).fetchFn);
+  const failed = await runProbe('wrong-but-secret-999', wrong);
+  assert.ok(!JSON.stringify({ lines: wrong.lines, failed }).includes('wrong-but-secret-999'));
+});
+
+test('review M3 — the token is scrubbed from thrown network errors', async () => {
+  const probe = io(fakeLunatask(MINE, { throwWithToken: true }).fetchFn);
+  const result = await runProbe(TOKEN, probe);
+  const everything = JSON.stringify({ lines: probe.lines, result });
+  assert.ok(everything.includes('***'));
+  assert.ok(!everything.includes(TOKEN));
+});
+
+test('review L1 — a create that fails ambiguously says the task may exist', async () => {
+  for (const postFails of ['server-error', 'malformed'] as const) {
+    const probe = io(fakeLunatask(MINE, { postFails }).fetchFn);
+    await runProbe(TOKEN, probe);
+    assert.match(probe.lines.join('\n'), /may have been created/i, postFails);
+  }
+});
+
+test('review L2 — an update to an unknown ID that creates a task: recorded, and the run stops', async () => {
+  const lunatask = fakeLunatask(MINE, { upsertUnknown: true });
+  const recorded: ProbeTask[] = [];
+  const result = await runProbe(TOKEN, io(lunatask.fetchFn, { onCreated: async (t) => void recorded.push(t) }));
+  assert.equal(result.stoppedEarly, true);
+  assert.ok(recorded.some((t) => t.id === result.unknownId), 'the accidental task is on record for clean-up');
+});
+
+test('review L2 — an accepted invalid status is a finding, and B is described as it really is', async () => {
+  const result = await runProbe(TOKEN, io(fakeLunatask(MINE, { acceptInvalidStatus: true }).fetchFn));
+  assert.ok(result.findings.some((f) => /invalid status/i.test(f.step) && !f.ok));
+  assert.equal(result.created[1].status, 'finished');
+});
+
+// ---- The record of probe tasks still to delete -----------------------------------------
+
+async function tempFolder() {
+  return mkdtemp(join(tmpdir(), 'probe-record-'));
+}
+
+test('review M4 — a missing record starts empty; an unreadable one stops rather than reset', async () => {
+  const folder = await tempFolder();
+  assert.deepEqual(await loadRecord(folder), { pending: [], done: [] });
+  await writeFile(join(folder, 'probe-tasks.json'), '{ "pending": [ oops');
+  await assert.rejects(loadRecord(folder), /probe-tasks\.json/);
+  await writeFile(join(folder, 'probe-tasks.json'), '{ "pending": "not a list" }');
+  await assert.rejects(loadRecord(folder), /probe-tasks\.json/);
+  assert.equal(await readFile(join(folder, 'probe-tasks.json'), 'utf8'), '{ "pending": "not a list" }', 'left as it was');
+});
+
+test('review M4 — the record round-trips through the file', async () => {
+  const folder = await tempFolder();
+  const record = { pending: [{ id: MINE[0].id, label: 'A', createdAt: 'x' }], done: ['y'] };
+  await saveRecord(folder, record);
+  assert.deepEqual(await loadRecord(folder), record);
+});
+
+test("review L3 — run 1's task is brought in once, and never again after clean-up", () => {
+  const run1 = { ranAt: '2026-10-28T07:40:58.961Z', answers: { deleted: false }, createdId: 'b4b61630-0fde-4089-b47a-32ed84ab7274' };
+  let record = mergeRun1({ pending: [], done: [] }, run1);
+  assert.equal(record.pending.length, 1);
+  record = mergeRun1(record, run1);
+  assert.equal(record.pending.length, 1, 'not added twice');
+  record = applyCleanup(record, { deleted: [run1.createdId], alreadyGone: [], failed: [], refused: [] });
+  assert.deepEqual(record.pending, []);
+  record = mergeRun1(record, run1);
+  assert.deepEqual(record.pending, [], 'not re-added once done');
+});
+
+test('review L3 — clean-up keeps failed and refused IDs on record, drops the rest', () => {
+  const pending = ['a', 'b', 'c', 'd'].map((id) => ({ id, label: 'A', createdAt: 'x' }));
+  const record = applyCleanup({ pending, done: [] }, { deleted: ['a'], alreadyGone: ['b'], failed: ['c'], refused: ['d'] });
+  assert.deepEqual(record.pending.map((p) => p.id), ['c', 'd']);
+  assert.deepEqual(record.done, ['a', 'b']);
+});
+
+// ---- The backstop itself -------------------------------------------------------------
+// The run's own checks stop a bad ID before it reaches the client, so the
+// client's guard is tested directly.
+
+function guarded(allowed: string[]) {
+  const sent: { method: string; url: string }[] = [];
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+    sent.push({ method: init?.method ?? 'GET', url: String(input) });
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+  const api = client(TOKEN, io(fetchFn), new Set(allowed), () => {});
+  return { api, sent };
+}
+const ALLOWED = '00000000-0000-4000-8000-000000000001';
+
+test('backstop — a write to a task not on the allowed list is refused, unsent', async () => {
+  const { api, sent } = guarded([ALLOWED]);
+  for (const method of ['PUT', 'DELETE']) {
+    await assert.rejects(api.call(method, MINE[0].id, { status: 'completed' }), /didn't create/);
+  }
+  assert.deepEqual(sent, []);
+});
+
+test('backstop — the whole task list can only be read or added to', async () => {
+  const { api, sent } = guarded([ALLOWED]);
+  for (const method of ['PUT', 'DELETE', 'PATCH']) await assert.rejects(api.call(method, null), /whole task list/);
+  assert.deepEqual(sent, []);
+  await api.call('GET', null);
+  await api.call('POST', null, {});
+  assert.equal(sent.length, 2);
+});
+
+test('backstop — anything not shaped like a task ID is refused, even if allowed and even to read', async () => {
+  const bad = ['..', '%2e%2e', 'x/../y', '', ALLOWED + '/extra'];
+  const { api, sent } = guarded(bad);
+  for (const id of bad) {
+    await assert.rejects(api.call('PUT', id, {}), /not a task ID/);
+    await assert.rejects(api.call('GET', id), /not a task ID/);
+  }
+  assert.deepEqual(sent, []);
+});
+
+test('backstop — an allowed task ID goes out as exactly /v1/tasks/<id>', async () => {
+  const { api, sent } = guarded([ALLOWED]);
+  await api.call('PUT', ALLOWED, { status: 'completed' });
+  assert.deepEqual(sent, [{ method: 'PUT', url: `https://api.lunatask.app/v1/tasks/${ALLOWED}` }]);
 });
