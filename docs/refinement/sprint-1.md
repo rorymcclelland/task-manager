@@ -269,3 +269,26 @@ depends on nothing. Building starts when Rory says go.
 - Offer to delete run 1's leftover first. Only the ID run 1 recorded creating
   can be deleted, and nothing else is ever sent to it.
 - Keep each run's findings, rather than overwriting them.
+
+**Update, 5 Nov 2026.** Rory found run 1's probe task, correctly named. It
+had just taken a while to sync from the API to the Lunatask app.
+
+- **Answered: a name sent through the API does show in Lunatask**, after a
+  sync delay. So the "not visible" answer in run 1 was the delay, not a
+  missing name.
+- **The probe no longer asks questions as it goes.** Because of the delay,
+  "go and look now" can't work in one sitting. And under the working
+  agreement of 2 Nov 2026, Rory's time goes on decisions, not mechanics. The
+  probe now:
+  - does every API step in one go;
+  - creates task A (left alone) and task B (completed, then reopened);
+  - writes a test pack for the one hand check, which is to look at both once
+    synced: both named means a status change leaves names alone;
+  - has a separate clean-up that deletes only the probe tasks it recorded,
+    including run 1's.
+- **Claude runs it, not Rory.** Rory is adding `api.lunatask.app` to the sites
+  Claude's workspace may reach. The script reads the token from `.env` on
+  his PC, so Claude never sees it.
+- **Commits** are back under Rory's name with Claude as co-author, as the
+  working agreement says. Commits from 26 Oct to 28 Oct went out under
+  Claude's name.
